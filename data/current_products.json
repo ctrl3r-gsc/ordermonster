@@ -1,106 +1,62 @@
 [
   {
-    "name": "ultimate gummies",
-    "flavor": "Mango",
+    "name": "Ultimate Gummies Mango",
     "dosage": 100,
-    "potency_type": "THC",
-    "price": 80,
-    "is_active": true
+    "price": 80.00
   },
   {
-    "name": "ultimate gummies",
-    "flavor": "Green Apple",
+    "name": "Ultimate Gummies Green Apple",
     "dosage": 250,
-    "potency_type": "THC",
-    "price": 170,
-    "is_active": true
+    "price": 170.00
   },
   {
-    "name": "ultimate gummies",
-    "flavor": "Strawberry",
+    "name": "Ultimate Gummies Strawberry",
     "dosage": 500,
-    "potency_type": "THC",
-    "price": 270,
-    "is_active": true
+    "price": 270.00
   },
   {
-    "name": "x-hash gummies",
-    "flavor": "Pineapple",
+    "name": "X-Hash Gummies Pineapple",
     "dosage": 150,
-    "potency_type": "hash",
-    "price": 130,
-    "is_active": true
+    "price": 130.00
   },
   {
-    "name": "x-hash gummies",
-    "flavor": "Blackcurrant",
+    "name": "X-Hash Gummies Blackcurrant",
     "dosage": 350,
-    "potency_type": "hash",
-    "price": 230,
-    "is_active": true
+    "price": 230.00
   },
   {
-    "name": "x-hash gummies",
-    "flavor": "Watermelon",
+    "name": "X-Hash Gummies Watermelon",
     "dosage": 600,
-    "potency_type": "hash",
-    "price": 330,
-    "is_active": true
+    "price": 330.00
   },
   {
-    "name": "rosin gummies",
-    "flavor": "Green Apple",
+    "name": "Rosin Gummies Green Apple",
     "dosage": 250,
-    "potency_type": "rosin",
-    "price": 300,
-    "is_active": true
+    "price": 300.00
   },
   {
-    "name": "breakfast cookies",
-    "flavor": null,
+    "name": "Breakfast Cookies",
     "dosage": 100,
-    "potency_type": "THC",
-    "price": 70,
-    "is_active": true
+    "price": 70.00
   },
   {
-    "name": "brownie",
-    "flavor": null,
+    "name": "Brownie",
     "dosage": 100,
-    "potency_type": "THC",
-    "price": 80,
-    "is_active": true
+    "price": 80.00
   },
   {
-    "name": "cookies",
-    "flavor": null,
+    "name": "Cookies",
     "dosage": 100,
-    "potency_type": "THC",
-    "price": 80,
-    "is_active": true
+    "price": 80.00
   },
   {
-    "name": "hash",
-    "flavor": null,
-    "dosage": null,
-    "potency_type": null,
-    "price": 0,
-    "is_active": true
-  },
-  {
-    "name": "magic gummies",
-    "flavor": null,
+    "name": "Magic Gummies 1g",
     "dosage": 1000,
-    "potency_type": "magic",
-    "price": 200,
-    "is_active": true
+    "price": 200.00
   },
   {
-    "name": "magic gummies",
-    "flavor": null,
+    "name": "Magic Gummies 2g",
     "dosage": 2000,
-    "potency_type": "magic",
-    "price": 400,
-    "is_active": true
+    "price": 400.00
   }
 ]

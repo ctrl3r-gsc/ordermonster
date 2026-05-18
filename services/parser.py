@@ -107,6 +107,9 @@ SYSTEM_INSTRUCTION = (
 
 
 PRODUCT_ALIASES = {
+    "magic gummies": "Magic Gummies",
+    "magic gummy": "Magic Gummies",
+    "magic": "Magic Gummies",
     "gummy": "Gummies",
     "gummies": "Gummies",
     "гамми": "Gummies",

@@ -193,7 +193,12 @@ async def find_product_for_item(
     if dosage is not None:
         stmt = stmt.where(Product.dosage == dosage)
     if clean_flavor:
-        stmt = stmt.where(func.lower(Product.flavor) == clean_flavor)
+        stmt = stmt.where(
+            or_(
+                func.lower(Product.flavor) == clean_flavor,
+                func.lower(Product.name).ilike(f"%{clean_flavor}%"),
+            )
+        )
     exact = await session.scalar(stmt.where(func.lower(Product.name) == clean_name).limit(1))
     if exact:
         return exact
@@ -207,11 +212,29 @@ async def find_product_for_item(
             fuzzy_stmt = fuzzy_stmt.where(Product.dosage == dosage)
         if clean_flavor:
             fuzzy_stmt = fuzzy_stmt.where(
-                or_(Product.flavor.is_(None), func.lower(Product.flavor) == clean_flavor)
+                or_(
+                    Product.flavor.is_(None),
+                    func.lower(Product.flavor) == clean_flavor,
+                    func.lower(Product.name).ilike(f"%{clean_flavor}%"),
+                )
             )
-        product = await session.scalar(fuzzy_stmt.order_by(Product.price.desc()).limit(1))
-        if product:
-            return product
+        products = list((await session.scalars(fuzzy_stmt)).all())
+        if products:
+            def match_score(candidate: Product) -> tuple[int, Decimal]:
+                candidate_name = candidate.name.lower()
+                score = 0
+                if clean_name == candidate_name:
+                    score += 100
+                for term in fuzzy_terms:
+                    if term and term in candidate_name:
+                        score += 10
+                if clean_flavor and clean_flavor in candidate_name:
+                    score += 40
+                if clean_name in {"gummy", "gummies"} and candidate_name.startswith("ultimate gummies"):
+                    score += 5
+                return score, decimal_money(candidate.price)
+
+            return max(products, key=match_score)
 
     return None
 
