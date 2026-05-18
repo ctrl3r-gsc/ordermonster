@@ -2,7 +2,6 @@ from aiogram import F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import DeliveryStatus, Order
@@ -46,11 +45,43 @@ def dashboard_summary_text(orders) -> str:
     )
 
 
+def delivery_emoji(status) -> str:
+    if status == DeliveryStatus.delivered:
+        return "🚚"
+    return "⏳"
+
+
+def payment_emoji(payment_status) -> str:
+    if payment_status == "paid":
+        return "💰"
+    if payment_status == "partially_paid":
+        return "⚠️"
+    return "❌"
+
+
+def dashboard_button_text(order) -> str:
+    id_part = f"# {order.id}".ljust(5)
+    shop_part = f"🏪 {order.shop.name[:18]}".ljust(22)
+    delivery_part = delivery_emoji(order.delivery_status)
+    payment_part = payment_emoji(order.payment_status.value)
+    return f"{id_part} | {shop_part} | {delivery_part} | {payment_part}"
+
+
+def delete_confirmation_keyboard(order_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"confirm_del:{order_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=f"cancel_del:{order_id}")],
+        ]
+    )
+
+
 def dashboard_keyboard(orders) -> InlineKeyboardMarkup:
     rows = []
     for order in orders:
-        text = f"❌ Удалить #{order.id}"
-        rows.append([InlineKeyboardButton(text=text, callback_data=f"dash_delete:{order.id}")])
+        rows.append(
+            [InlineKeyboardButton(text=dashboard_button_text(order), callback_data=f"dash_delete:{order.id}")]
+        )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -82,17 +113,8 @@ async def dashboard_delete(callback: CallbackQuery, session: AsyncSession) -> No
         await callback.answer("Order not found.", show_alert=True)
         return
 
-    await session.delete(order)
-    await session.flush()
-
-    orders = await dashboard_orders(session)
-    if not orders:
-        await callback.message.edit_text("No dashboard orders for today.")
-    else:
-        await callback.message.edit_text(
-            dashboard_summary_text(orders),
-            reply_markup=dashboard_keyboard(orders),
-            parse_mode="HTML",
-        )
-
-    await callback.answer(f"Заказ #{order_id} удален")
+    await callback.message.edit_text(
+        f"Удалить заказ #{order_id}?",
+        reply_markup=delete_confirmation_keyboard(order_id),
+    )
+    await callback.answer()

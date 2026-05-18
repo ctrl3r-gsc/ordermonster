@@ -10,7 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import DeliveryStatus, Shop
+from db.models import DeliveryStatus, Order, Shop
 from services.orders import (
     add_payment,
     all_shops,
@@ -147,6 +147,15 @@ def order_card_keyboard(order_id: int, delivered: bool = False) -> InlineKeyboar
     rows.append([InlineKeyboardButton(text="Dashboard", callback_data="dash")])
     rows.append([InlineKeyboardButton(text="❌ Удалить заказ / Delete Order", callback_data=f"delete_order:{order_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def delete_confirmation_keyboard(order_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"confirm_del:{order_id}")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data=f"cancel_del:{order_id}")],
+        ]
+    )
 
 
 def shops_keyboard(shops) -> InlineKeyboardMarkup:
@@ -452,10 +461,70 @@ async def delete_order(callback: CallbackQuery, session: AsyncSession) -> None:
         await callback.answer("Order not found.", show_alert=True)
         return
 
+    await callback.message.edit_text(
+        f"{order_card_text(order)}\n\nУдалить заказ #{order_id}?",
+        reply_markup=delete_confirmation_keyboard(order_id),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("confirm_del:"))
+async def confirm_delete(callback: CallbackQuery, session: AsyncSession) -> None:
+    raw_order_id = callback.data.split(":", 1)[1]
+    try:
+        order_id = int(raw_order_id)
+    except ValueError:
+        await callback.answer("Invalid order ID.", show_alert=True)
+        return
+
+    order = await session.get(Order, order_id)
+    if order is None:
+        await callback.answer("Order not found.", show_alert=True)
+        return
+
     await session.delete(order)
     await session.flush()
-    await callback.message.delete()
-    await callback.answer("Заказ успешно удален", show_alert=False)
+
+    if callback.message and callback.message.text and callback.message.text.lstrip().startswith("📦"):
+        await callback.message.delete()
+    else:
+        orders = await dashboard_orders(session)
+        if not orders:
+            await callback.message.edit_text("No dashboard orders for today.")
+        else:
+            await callback.message.edit_text(
+                dashboard_summary_text(orders),
+                reply_markup=dashboard_keyboard(orders),
+                parse_mode="HTML",
+            )
+
+    await callback.answer(f"Заказ #{order_id} удален")
+
+
+@router.callback_query(F.data.startswith("cancel_del:"))
+async def cancel_delete(callback: CallbackQuery, session: AsyncSession) -> None:
+    raw_order_id = callback.data.split(":", 1)[1]
+    try:
+        order_id = int(raw_order_id)
+    except ValueError:
+        await callback.answer("Invalid order ID.", show_alert=True)
+        return
+
+    if callback.message and callback.message.text and callback.message.text.lstrip().startswith("📦"):
+        await show_order_card(callback.message, session, order_id)
+    else:
+        orders = await dashboard_orders(session)
+        if not orders:
+            await callback.message.edit_text("No dashboard orders for today.")
+        else:
+            await callback.message.edit_text(
+                dashboard_summary_text(orders),
+                reply_markup=dashboard_keyboard(orders),
+                parse_mode="HTML",
+            )
+
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("pr:"))
