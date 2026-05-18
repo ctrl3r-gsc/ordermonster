@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import DeliveryStatus
 from handlers.orders import order_card_keyboard, order_card_text
-from services.orders import dashboard_orders, dashboard_day_bounds, format_dashboard_datetime, get_order
+from services.orders import bangkok_datetime, dashboard_orders, dashboard_day_bounds, format_dashboard_datetime, get_order
 
 router = Router()
 ORDER_CHAT_TYPES = (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP)
@@ -25,10 +25,7 @@ def is_today_order(order) -> bool:
     created_at = order.created_at
     if created_at is None:
         return False
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=start.tzinfo)
-    else:
-        created_at = created_at.astimezone(start.tzinfo)
+    created_at = bangkok_datetime(created_at)
     return start <= created_at < end
 
 

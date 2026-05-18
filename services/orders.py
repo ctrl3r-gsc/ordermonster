@@ -1,6 +1,6 @@
 import os
 import re
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 from difflib import SequenceMatcher
 from zoneinfo import ZoneInfo
@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from db.models import DeliveryStatus, Order, OrderItem, OrderPayment, PaymentMethod, PaymentStatus, Product, Shop
 
 
+UTC_TZ = ZoneInfo("UTC")
 BANGKOK_TZ = ZoneInfo("Asia/Bangkok")
 
 
@@ -54,7 +55,9 @@ def bangkok_datetime(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
+        value = value.replace(tzinfo=UTC_TZ)
+    else:
+        value = value.astimezone(UTC_TZ)
     return value.astimezone(BANGKOK_TZ)
 
 

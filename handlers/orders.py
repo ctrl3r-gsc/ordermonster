@@ -17,6 +17,7 @@ from services.orders import (
     create_order_from_parsed,
     dashboard_orders,
     dashboard_day_bounds,
+    bangkok_datetime,
     format_dashboard_datetime,
     format_order_datetime,
     get_or_create_shop,
@@ -230,10 +231,7 @@ def is_today_order(order) -> bool:
     created_at = order.created_at
     if created_at is None:
         return False
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=start.tzinfo)
-    else:
-        created_at = created_at.astimezone(start.tzinfo)
+    created_at = bangkok_datetime(created_at)
     return start <= created_at < end
 
 
