@@ -256,15 +256,6 @@ async def start(message: Message) -> None:
     await respond_to_message(message, "Send or forward a raw order message. Use /dashboard to review active orders.")
 
 
-@router.message(Command("dashboard"), F.chat.type.in_(ORDER_CHAT_TYPES))
-async def dashboard(message: Message, session: AsyncSession) -> None:
-    orders = await dashboard_orders(session)
-    if not orders:
-        await respond_to_message(message, "No dashboard orders for today.")
-        return
-    await respond_to_message(message, dashboard_summary_text(orders), reply_markup=dashboard_keyboard(orders), parse_mode="HTML")
-
-
 @router.callback_query(F.data == "dash")
 async def dashboard_cb(callback: CallbackQuery, session: AsyncSession) -> None:
     orders = await dashboard_orders(session)
