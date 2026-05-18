@@ -67,9 +67,15 @@ def money(value: Decimal | int | str | None) -> str:
 
 def payment_label(order) -> str:
     if order.payment_status.value == "paid":
-        return f"✅ Paid ({money(paid_amount(order))} THB)"
+        method = ""
+        if order.payments:
+            method = f" ({order.payments[-1].payment_method.value.title()})"
+        return f"✅ Paid{method} ({money(paid_amount(order))} THB)"
     if order.payment_status.value == "partially_paid":
-        return f"🟡 Partially Paid: {money(paid_amount(order))} / {money(order.total_amount)} THB"
+        method = ""
+        if order.payments:
+            method = f" via {order.payments[-1].payment_method.value.title()}"
+        return f"🟡 Partially Paid: {money(paid_amount(order))} / {money(order.total_amount)} THB{method}"
     return "⏳ Processing"
 
 
