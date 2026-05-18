@@ -7,7 +7,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import DeliveryStatus, Order
-from services.orders import dashboard_orders, dashboard_day_bounds
+from services.orders import dashboard_orders, dashboard_day_bounds, format_dashboard_datetime
 
 router = Router()
 ORDER_CHAT_TYPES = (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP)
@@ -62,10 +62,11 @@ def payment_emoji(payment_status) -> str:
 
 
 def dashboard_button_text(order) -> str:
-    shop_name = order.shop.name[:16].ljust(16)
+    created_at = format_dashboard_datetime(order.created_at).replace(" ", " (") + ")"
+    shop_name = order.shop.name[:18]
     delivery_part = delivery_emoji(order.delivery_status)
     payment_part = payment_emoji(order.payment_status.value)
-    return f"#{order.id} | 🏪 {shop_name} | {delivery_part} | {payment_part}"
+    return f"#{order.id} | 📅 {created_at} | {shop_name} | {delivery_part} {payment_part}"[:64]
 
 
 def delete_confirmation_keyboard(order_id: int) -> InlineKeyboardMarkup:

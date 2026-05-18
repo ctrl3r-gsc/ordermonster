@@ -17,6 +17,8 @@ from services.orders import (
     create_order_from_parsed,
     dashboard_orders,
     dashboard_day_bounds,
+    format_dashboard_datetime,
+    format_order_datetime,
     get_or_create_shop,
     get_order,
     item_subtotal,
@@ -96,6 +98,7 @@ def product_display_name(product) -> str:
 def order_card_text(order) -> str:
     lines = [
         f"📦 <b>Order # {order.id}</b>",
+        f"📅 Дата: {format_order_datetime(order.created_at)}",
         f"🏪 Shop: <b>{escape(order.shop.name)}</b>",
         f"📍 Address: {escape(order.shop.address) if order.shop.address else 'not specified'}",
         "",
@@ -250,12 +253,29 @@ def dashboard_summary_text(orders) -> str:
     )
 
 
+def dashboard_delivery_emoji(status) -> str:
+    if status == DeliveryStatus.delivered:
+        return "✅"
+    if status == DeliveryStatus.shipped:
+        return "🚚"
+    return "⏳"
+
+
+def dashboard_payment_emoji(payment_status) -> str:
+    if payment_status == "paid":
+        return "💰"
+    if payment_status == "partially_paid":
+        return "⚠️"
+    return "❌"
+
+
 def dashboard_keyboard(orders) -> InlineKeyboardMarkup:
     rows = []
     for order in orders:
+        created_at = format_dashboard_datetime(order.created_at).replace(" ", " (") + ")"
         text = (
-            f"#{order.id} {order.shop.name[:24]} | "
-            f"{order.delivery_status.value} | {order.payment_status.value}"
+            f"#{order.id} | 📅 {created_at} | {order.shop.name[:18]} | "
+            f"{dashboard_delivery_emoji(order.delivery_status)} {dashboard_payment_emoji(order.payment_status.value)}"
         )
         rows.append([InlineKeyboardButton(text=text[:64], callback_data=f"ord:{order.id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

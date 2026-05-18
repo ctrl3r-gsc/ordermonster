@@ -1,6 +1,6 @@
 import os
 import re
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from difflib import SequenceMatcher
 from zoneinfo import ZoneInfo
@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from db.models import DeliveryStatus, Order, OrderItem, OrderPayment, PaymentMethod, PaymentStatus, Product, Shop
+
+
+BANGKOK_TZ = ZoneInfo("Asia/Bangkok")
 
 
 SHOP_PREFIX_RE = re.compile(
@@ -45,6 +48,28 @@ def decimal_money(value: Decimal | int | str | None) -> Decimal:
     if value is None:
         return Decimal("0")
     return Decimal(str(value)).quantize(Decimal("0.01"))
+
+
+def bangkok_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(BANGKOK_TZ)
+
+
+def format_order_datetime(value: datetime | None) -> str:
+    local_value = bangkok_datetime(value)
+    if local_value is None:
+        return "unknown"
+    return local_value.strftime("%d.%m.%Y | %H:%M")
+
+
+def format_dashboard_datetime(value: datetime | None) -> str:
+    local_value = bangkok_datetime(value)
+    if local_value is None:
+        return "--.-- --:--"
+    return local_value.strftime("%d.%m %H:%M")
 
 
 def item_unit_price(item: OrderItem) -> Decimal:
