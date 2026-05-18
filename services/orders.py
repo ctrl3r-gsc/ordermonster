@@ -12,6 +12,29 @@ from sqlalchemy.orm import selectinload
 from db.models import DeliveryStatus, Order, OrderItem, OrderPayment, PaymentMethod, PaymentStatus, Product, Shop
 
 
+SHOP_PREFIX_RE = re.compile(
+    r"^\s*(?:🛒\s*)?(?:"
+    r"here['’]?s\s+your\s+order\s+for|"
+    r"обновл[её]нный\s+заказ\s+для|"
+    r"заказ\s+для|"
+    r"ptt\s+customer|"
+    r"new\s+order|"
+    r"order\s+for|"
+    r"order|"
+    r"shop|"
+    r"store"
+    r")\s*(?:[:\-–—]\s*)*",
+    flags=re.I,
+)
+EMOJI_RE = re.compile(
+    "["
+    "\U00002600-\U000027BF"
+    "\U0001F000-\U0001FAFF"
+    "]+"
+)
+SHOP_SPECIAL_CHARS_RE = re.compile(r"[^\w\s&.'’]", flags=re.UNICODE)
+
+
 def make_sku(name: str, dosage: int | None, flavor: str | None) -> str:
     raw = "-".join(str(part) for part in (name, dosage or "na", flavor or "plain"))
     sku = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
@@ -46,8 +69,24 @@ def calculated_unit_price(product: Product, shop: Shop, is_gift: bool = False) -
     return max(Decimal("0.00"), base_price + modifier).quantize(Decimal("0.01"))
 
 
+def sanitize_shop_name(name: str | None) -> str:
+    if not name:
+        return ""
+    clean_name = str(name).strip()
+    previous_name = None
+    while previous_name != clean_name:
+        previous_name = clean_name
+        clean_name = SHOP_PREFIX_RE.sub("", clean_name).strip()
+    clean_name = EMOJI_RE.sub("", clean_name)
+    clean_name = SHOP_SPECIAL_CHARS_RE.sub(" ", clean_name)
+    clean_name = re.sub(r"\s+", " ", clean_name)
+    return clean_name.strip(" :-–—.,'’")
+
+
 async def get_or_create_shop(session: AsyncSession, name: str, address: str | None = None) -> Shop:
-    clean_name = name.strip()
+    clean_name = sanitize_shop_name(name)
+    if not clean_name:
+        raise ValueError("Shop name cannot be empty")
     shop = await session.scalar(select(Shop).where(func.lower(Shop.name) == clean_name.lower()))
     if shop:
         if address and not shop.address:
@@ -76,7 +115,8 @@ async def all_shops(session: AsyncSession) -> list[Shop]:
 
 
 def normalize_shop_name(name: str | None) -> str:
-    if not name:
+    clean_name = sanitize_shop_name(name)
+    if not clean_name:
         return ""
     translit = str.maketrans(
         {
@@ -115,7 +155,7 @@ def normalize_shop_name(name: str | None) -> str:
             "ъ": "",
         }
     )
-    return re.sub(r"[^a-z0-9]+", "", name.lower().translate(translit))
+    return re.sub(r"[^a-z0-9]+", "", clean_name.lower().translate(translit))
 
 
 def match_existing_shop_name(shop_name: str | None, shops: list[Shop]) -> Shop | None:

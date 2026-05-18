@@ -9,6 +9,7 @@ from google.genai import types
 from pydantic import BaseModel, Field, field_validator
 
 from config import get_settings
+from services.orders import sanitize_shop_name
 
 
 class OrderItem(BaseModel):
@@ -47,6 +48,7 @@ SYSTEM_INSTRUCTION = (
     "CRITICAL RULES:\n"
     "1. `shop_name`: Extract ONLY the specific name of the shop/client (e.g., 'шаман', 'SHAMAN', 'TAI MA TON'). "
     "NEVER copy the whole text here! If no shop name is mentioned in the text, set it to null.\n"
+    "   `shop_name` MUST contain only the clean raw establishment brand. Never include labels, prefixes, punctuation, emojis, or order phrases such as 'Shop:', 'Store:', 'New Order', 'Order for', 'Order:', 'Заказ для', or 'Обновлённый заказ для'.\n"
     "2. `items`: Extract every single ordered product into this array.\n"
     "   - `product_name`: Standardize to 'Gummies', 'Brownie', 'Cookie', or 'Drops' (e.g., 'гамми', 'гамме' -> 'Gummies').\n"
     "   - `dosage`: Extract ONLY the integer number of milligrams (e.g., '500мг' -> 500).\n"
@@ -225,6 +227,7 @@ def _translit_ru(value: str) -> str:
 
 
 def _normalize_shop_name(value: str | None) -> str:
+    value = sanitize_shop_name(value)
     if not value:
         return ""
     return re.sub(r"[^a-z0-9]+", "", _translit_ru(value.lower()))
@@ -475,10 +478,14 @@ def fallback_parse_order_text(text: str, existing_shops: list[str] | None = None
             if item:
                 items.append(item)
 
-    return ExtractedOrder(
-        shop_name=_best_existing_shop_match(shop_name, existing_shops)
+    resolved_shop_name = (
+        _best_existing_shop_match(shop_name, existing_shops)
         or _best_shop_mentioned_in_text(text, existing_shops)
-        or shop_name,
+        or shop_name
+    )
+
+    return ExtractedOrder(
+        shop_name=sanitize_shop_name(resolved_shop_name),
         items=items,
         suggested_payment_method=payment,
         total_amount=total_amount,
@@ -499,17 +506,19 @@ def _merge_with_fallback(
     raw_text: str,
     existing_shops: list[str] | None = None,
 ) -> ExtractedOrder:
+    extracted.shop_name = sanitize_shop_name(extracted.shop_name)
+    fallback.shop_name = sanitize_shop_name(fallback.shop_name)
     if _is_bad_shop_name(extracted.shop_name, raw_text):
         extracted.shop_name = None
     matched_shop = _best_existing_shop_match(extracted.shop_name, existing_shops) or _best_shop_mentioned_in_text(
         raw_text, existing_shops
     )
     if matched_shop:
-        extracted.shop_name = matched_shop
+        extracted.shop_name = sanitize_shop_name(matched_shop)
     if not extracted.items and fallback.items:
         extracted.items = fallback.items
     if extracted.shop_name is None and fallback.shop_name and not _is_bad_shop_name(fallback.shop_name, raw_text):
-        extracted.shop_name = fallback.shop_name
+        extracted.shop_name = sanitize_shop_name(fallback.shop_name)
     if extracted.suggested_payment_method is None:
         extracted.suggested_payment_method = fallback.suggested_payment_method
     if extracted.total_amount is None:

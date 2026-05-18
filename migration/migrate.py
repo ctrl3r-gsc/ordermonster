@@ -7,12 +7,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from db import SessionLocal, init_db
 from db.models import DeliveryStatus, Order, OrderItem, OrderPayment, PaymentMethod, PaymentStatus, Shop
 from services.catalog import seed_current_catalog
-from services.orders import calculated_unit_price, find_product_for_item, get_or_create_shop
+from services.orders import calculated_unit_price, find_product_for_item, get_or_create_shop, sanitize_shop_name
 from services.parser import fallback_parse_order_text
 
 
@@ -65,8 +65,9 @@ async def migrate(path: Path, catalog_path: Path) -> None:
             parsed = fallback_parse_order_text(message_body)
             if not parsed.shop_name or not parsed.items:
                 continue
-            existing_shop = await session.scalar(select(Shop).where(Shop.name == parsed.shop_name.strip()))
-            shop = existing_shop or await get_or_create_shop(session, parsed.shop_name)
+            clean_shop_name = sanitize_shop_name(parsed.shop_name)
+            existing_shop = await session.scalar(select(Shop).where(func.lower(Shop.name) == clean_shop_name.lower()))
+            shop = existing_shop or await get_or_create_shop(session, clean_shop_name)
             matched_items = []
             for item in parsed.items:
                 product = await find_product_for_item(session, item.product_name, item.dosage, item.flavor)

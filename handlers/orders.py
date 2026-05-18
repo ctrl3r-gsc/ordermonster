@@ -25,6 +25,7 @@ from services.orders import (
     paid_amount,
     update_item_unit_price,
     remaining_amount,
+    sanitize_shop_name,
     top_shops,
 )
 from services.parser import parse_order_text
@@ -292,7 +293,9 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
         await respond_to_message(message, "I could not find order items in that message.")
         return
     await state.set_data({"parsed": parsed})
-    shop_name = parsed.get("shop_name")
+    shop_name = sanitize_shop_name(parsed.get("shop_name"))
+    if shop_name:
+        parsed["shop_name"] = shop_name
     if shop_name:
         matched_shop = match_existing_shop_name(shop_name, shops)
         if matched_shop:
@@ -353,7 +356,7 @@ async def enter_shop_name(message: Message, state: FSMContext, session: AsyncSes
     if looks_like_order_text(message.text):
         await process_order_text(message, state, session)
         return
-    await state.update_data(shop_name=message.text.strip())
+    await state.update_data(shop_name=sanitize_shop_name(message.text))
     await state.set_state(OrderFlow.entering_shop_address)
     await respond_to_message(message, "Type the physical address.")
 
@@ -429,12 +432,16 @@ async def choose_payment_method(callback: CallbackQuery, state: FSMContext, sess
         data = await state.get_data()
         amount = Decimal(data.get("amount", "0"))
     if amount <= 0:
-        await callback.message.edit_text("No payable amount remains.", reply_markup=order_card_keyboard(order.id))
+        await show_order_card(callback.message, session, order.id)
         await state.clear()
         await callback.answer()
         return
-    order = await add_payment(session, order, method, amount)
-    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
+    updated_order = await add_payment(session, order, method, amount)
+    updated_order = await get_order(session, updated_order.id)
+    delivered = updated_order.delivery_status == DeliveryStatus.delivered
+    updated_text = order_card_text(updated_order)
+    updated_markup = order_card_keyboard(updated_order.id, delivered=delivered)
+    await callback.message.edit_text(text=updated_text, reply_markup=updated_markup, parse_mode="HTML")
     await state.clear()
     await callback.answer()
 
