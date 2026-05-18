@@ -139,6 +139,7 @@ def order_card_keyboard(order_id: int, delivered: bool = False) -> InlineKeyboar
         )
         rows.append([InlineKeyboardButton(text="✏️ Изменить цену / Edit Prices", callback_data=f"pr:{order_id}")])
     rows.append([InlineKeyboardButton(text="Dashboard", callback_data="dash")])
+    rows.append([InlineKeyboardButton(text="❌ Удалить заказ / Delete Order", callback_data=f"delete_order:{order_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -437,6 +438,27 @@ async def edit_delivery(callback: CallbackQuery) -> None:
     order_id = int(callback.data.split(":")[1])
     await callback.message.edit_text("Delivery options:", reply_markup=delivery_keyboard(order_id))
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("delete_order:"))
+async def delete_order(callback: CallbackQuery, session: AsyncSession) -> None:
+    raw_order_id = callback.data.split(":", 1)[1]
+    try:
+        order_id = int(raw_order_id)
+    except ValueError:
+        await callback.answer("Invalid order ID.", show_alert=True)
+        return
+
+    try:
+        order = await get_order(session, order_id)
+    except ValueError:
+        await callback.answer("Order not found.", show_alert=True)
+        return
+
+    await session.delete(order)
+    await session.flush()
+    await callback.message.delete()
+    await callback.answer("Заказ успешно удален", show_alert=False)
 
 
 @router.callback_query(F.data.startswith("pr:"))
