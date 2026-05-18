@@ -1,8 +1,11 @@
+import os
 import re
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 from difflib import SequenceMatcher
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -57,15 +60,19 @@ async def get_or_create_shop(session: AsyncSession, name: str, address: str | No
 
 
 async def top_shops(session: AsyncSession, limit: int = 10, search: str | None = None) -> list[Shop]:
-    stmt: Select[tuple[Shop]] = select(Shop)
+    last_order_at = func.max(Order.created_at).label("last_order_at")
+    stmt: Select[tuple[Shop]] = select(Shop).outerjoin(Order, Order.shop_id == Shop.id).group_by(Shop.id)
     if search:
         stmt = stmt.where(Shop.name.ilike(f"%{search}%"))
-    stmt = stmt.order_by(Shop.created_at.desc()).limit(limit)
+    stmt = stmt.order_by(last_order_at.desc().nulls_last(), Shop.name.asc()).limit(limit)
     return list((await session.scalars(stmt)).all())
 
 
 async def all_shops(session: AsyncSession) -> list[Shop]:
-    return list((await session.scalars(select(Shop).order_by(Shop.name.asc()))).all())
+    last_order_at = func.max(Order.created_at).label("last_order_at")
+    stmt = select(Shop).outerjoin(Order, Order.shop_id == Shop.id).group_by(Shop.id)
+    stmt = stmt.order_by(last_order_at.desc().nulls_last(), Shop.name.asc())
+    return list((await session.scalars(stmt)).all())
 
 
 def normalize_shop_name(name: str | None) -> str:
@@ -318,15 +325,29 @@ async def add_payment(session: AsyncSession, order: Order, method: str, amount: 
     return await get_order(session, order.id)
 
 
+def dashboard_day_bounds() -> tuple[datetime, datetime]:
+    timezone_name = os.getenv("APP_TIMEZONE", "Asia/Bangkok")
+    tz = ZoneInfo(timezone_name)
+    today = datetime.now(tz).date()
+    start = datetime.combine(today, time.min, tzinfo=tz)
+    end = start + timedelta(days=1)
+    return start, end
+
+
 async def dashboard_orders(session: AsyncSession) -> list[Order]:
+    today_start, tomorrow_start = dashboard_day_bounds()
+    is_today = and_(Order.created_at >= today_start, Order.created_at < tomorrow_start)
+    is_incomplete = (Order.delivery_status != DeliveryStatus.delivered) | (Order.payment_status != PaymentStatus.paid)
+    is_older_incomplete = and_(Order.created_at < today_start, is_incomplete)
+
     return list(
         (
             await session.scalars(
                 select(Order)
-                .where((Order.delivery_status != DeliveryStatus.delivered) | (Order.payment_status != PaymentStatus.paid))
+                .where(or_(is_today, is_older_incomplete))
                 .options(selectinload(Order.shop))
-                .order_by(Order.updated_at.desc())
-                .limit(50)
+                .order_by(Order.created_at.desc(), Order.updated_at.desc())
+                .limit(100)
             )
         ).all()
     )

@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     bot_token: str = Field(default="", alias="BOT_TOKEN")
     gemini_model: str = Field(default="gemini-1.5-flash", alias="GEMINI_MODEL")
     allowed_users_raw: str = Field(default="", alias="ALLOWED_USERS")
+    allowed_chats_raw: str = Field(default="", alias="ALLOWED_CHATS")
 
     postgres_db: str = Field(default="orderbot", alias="POSTGRES_DB")
     postgres_user: str = Field(default="orderbot", alias="POSTGRES_USER")
@@ -26,12 +27,20 @@ class Settings(BaseSettings):
 
     @property
     def allowed_users(self) -> set[int]:
-        users: set[int] = set()
-        for raw in self.allowed_users_raw.split(","):
+        return self._parse_int_set(self.allowed_users_raw)
+
+    @property
+    def allowed_chats(self) -> set[int]:
+        return self._parse_int_set(self.allowed_chats_raw)
+
+    @staticmethod
+    def _parse_int_set(raw_values: str) -> set[int]:
+        values: set[int] = set()
+        for raw in raw_values.split(","):
             raw = raw.strip()
             if raw:
-                users.add(int(raw))
-        return users
+                values.add(int(raw))
+        return values
 
 
 @lru_cache

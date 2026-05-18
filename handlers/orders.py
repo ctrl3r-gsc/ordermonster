@@ -1,7 +1,9 @@
+import re
 from decimal import Decimal, InvalidOperation
 from html import escape
 
 from aiogram import F, Router
+from aiogram.enums import ChatType
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -14,6 +16,7 @@ from services.orders import (
     all_shops,
     create_order_from_parsed,
     dashboard_orders,
+    dashboard_day_bounds,
     get_or_create_shop,
     get_order,
     item_subtotal,
@@ -27,6 +30,22 @@ from services.orders import (
 from services.parser import parse_order_text
 
 router = Router()
+ORDER_CHAT_TYPES = (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP)
+
+
+async def respond_to_message(message: Message, text: str, **kwargs):
+    if message.chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
+        return await message.reply(text, **kwargs)
+    return await message.answer(text, **kwargs)
+
+
+def looks_like_order_text(text: str | None) -> bool:
+    if not text:
+        return False
+    low = text.lower()
+    has_product = any(word in low for word in ("gummy", "gummies", "гамми", "гамме", "brownie", "брауни", "cookie", "cookies"))
+    has_amount = bool(re.search(r"\d+\s*(?:mg|мг|g|гр|г|pcs?|шт|пач|x)", low))
+    return has_product and has_amount
 
 
 class OrderFlow(StatesGroup):
@@ -186,71 +205,119 @@ async def show_order_card(target: Message, session: AsyncSession, order_id: int)
     )
 
 
-@router.message(Command("start"))
+def is_today_order(order) -> bool:
+    start, end = dashboard_day_bounds()
+    created_at = order.created_at
+    if created_at is None:
+        return False
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=start.tzinfo)
+    else:
+        created_at = created_at.astimezone(start.tzinfo)
+    return start <= created_at < end
+
+
+def dashboard_summary_text(orders) -> str:
+    today_count = sum(1 for order in orders if is_today_order(order))
+    pending_deliveries = sum(1 for order in orders if order.delivery_status != DeliveryStatus.delivered)
+    processing_payments = sum(1 for order in orders if order.payment_status.value != "paid")
+    older_active = sum(
+        1
+        for order in orders
+        if not is_today_order(order)
+        and (order.delivery_status != DeliveryStatus.delivered or order.payment_status.value != "paid")
+    )
+    return "\n".join(
+        [
+            "<b>Dashboard</b>",
+            f"Today orders: <b>{today_count}</b>",
+            f"Older active orders: <b>{older_active}</b>",
+            f"Pending deliveries: <b>{pending_deliveries}</b>",
+            f"Processing payments: <b>{processing_payments}</b>",
+            "",
+            "Active worklist:",
+        ]
+    )
+
+
+def dashboard_keyboard(orders) -> InlineKeyboardMarkup:
+    rows = []
+    for order in orders:
+        prefix = "Today" if is_today_order(order) else "Older"
+        text = (
+            f"#{order.id} {order.shop.name[:20]} | {prefix} | "
+            f"{order.delivery_status.value} | {order.payment_status.value}"
+        )
+        rows.append([InlineKeyboardButton(text=text[:64], callback_data=f"ord:{order.id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.message(Command("start"), F.chat.type.in_(ORDER_CHAT_TYPES))
 async def start(message: Message) -> None:
-    await message.answer("Send or forward a raw order message. Use /dashboard to review active orders.")
+    await respond_to_message(message, "Send or forward a raw order message. Use /dashboard to review active orders.")
 
 
-@router.message(Command("dashboard"))
+@router.message(Command("dashboard"), F.chat.type.in_(ORDER_CHAT_TYPES))
 async def dashboard(message: Message, session: AsyncSession) -> None:
     orders = await dashboard_orders(session)
     if not orders:
-        await message.answer("No active or issue orders.")
+        await respond_to_message(message, "No dashboard orders for today and no older unfinished orders.")
         return
-    rows = [
-        [
-            InlineKeyboardButton(
-                text=f"#{order.id} {order.shop.name[:24]} | {order.delivery_status.value} | {order.payment_status.value}",
-                callback_data=f"ord:{order.id}",
-            )
-        ]
-        for order in orders
-    ]
-    await message.answer("Active / issue orders:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await respond_to_message(message, dashboard_summary_text(orders), reply_markup=dashboard_keyboard(orders), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "dash")
 async def dashboard_cb(callback: CallbackQuery, session: AsyncSession) -> None:
     orders = await dashboard_orders(session)
     if not orders:
-        await callback.message.edit_text("No active or issue orders.")
+        await callback.message.edit_text("No dashboard orders for today and no older unfinished orders.")
         await callback.answer()
         return
-    rows = [
-        [InlineKeyboardButton(text=f"#{order.id} {order.shop.name[:28]}", callback_data=f"ord:{order.id}")]
-        for order in orders
-    ]
-    await callback.message.edit_text("Active / issue orders:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await callback.message.edit_text(
+        dashboard_summary_text(orders), reply_markup=dashboard_keyboard(orders), parse_mode="HTML"
+    )
     await callback.answer()
 
 
-@router.message(StateFilter(None), F.text)
+@router.message(StateFilter(None), F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
 async def parse_new_order(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    await process_order_text(message, state, session)
+
+
+async def process_order_text(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    await state.clear()
     shops = await all_shops(session)
     parsed = await parse_order_text(message.text, [shop.name for shop in shops])
     if not parsed.get("items"):
-        await message.answer("I could not find order items in that message.")
+        await state.clear()
+        await respond_to_message(message, "I could not find order items in that message.")
         return
-    await state.update_data(parsed=parsed)
+    await state.set_data({"parsed": parsed})
     shop_name = parsed.get("shop_name")
     if shop_name:
         matched_shop = match_existing_shop_name(shop_name, shops)
         if matched_shop:
             parsed["shop_name"] = matched_shop.name
             order = await create_order_from_parsed(session, parsed, matched_shop, message.from_user.id)
-            await message.answer(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
             await state.clear()
+            await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
             return
         await state.update_data(shop_name=shop_name)
         await state.set_state(OrderFlow.entering_shop_address)
-        await message.answer(
+        await respond_to_message(
+            message,
             f"Shop '{escape(shop_name)}' not found. Create it?\nType the physical address to create this shop.",
             parse_mode="HTML",
         )
         return
     shops = await top_shops(session)
     await state.set_state(OrderFlow.choosing_shop)
-    await message.answer("Choose a shop for this order:", reply_markup=shops_keyboard(shops))
+    await respond_to_message(message, "Choose a shop for this order:", reply_markup=shops_keyboard(shops))
+
+
+@router.message(OrderFlow.choosing_shop, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
+async def replace_draft_while_choosing_shop(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    await process_order_text(message, state, session)
 
 
 @router.callback_query(F.data.startswith("shop:"))
@@ -277,30 +344,36 @@ async def choose_shop(callback: CallbackQuery, state: FSMContext, session: Async
         await callback.answer()
         return
     order = await create_order_from_parsed(session, parsed, selected, callback.from_user.id)
-    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
     await state.clear()
+    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
     await callback.answer()
 
 
-@router.message(OrderFlow.entering_shop_name, F.text)
-async def enter_shop_name(message: Message, state: FSMContext) -> None:
+@router.message(OrderFlow.entering_shop_name, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
+async def enter_shop_name(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if looks_like_order_text(message.text):
+        await process_order_text(message, state, session)
+        return
     await state.update_data(shop_name=message.text.strip())
     await state.set_state(OrderFlow.entering_shop_address)
-    await message.answer("Type the physical address.")
+    await respond_to_message(message, "Type the physical address.")
 
 
-@router.message(OrderFlow.entering_shop_address, F.text)
+@router.message(OrderFlow.entering_shop_address, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
 async def enter_shop_address(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if looks_like_order_text(message.text):
+        await process_order_text(message, state, session)
+        return
     data = await state.get_data()
     parsed = data.get("parsed")
     if not parsed:
-        await message.answer("Order draft expired. Send the raw order again.")
+        await respond_to_message(message, "Order draft expired. Send the raw order again.")
         await state.clear()
         return
     shop = await get_or_create_shop(session, data["shop_name"], message.text.strip())
     order = await create_order_from_parsed(session, parsed, shop, message.from_user.id)
-    await message.answer(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
     await state.clear()
+    await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("ord:"))
@@ -332,19 +405,19 @@ async def split_payment(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
-@router.message(OrderFlow.entering_split_amount, F.text)
+@router.message(OrderFlow.entering_split_amount, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
 async def enter_split_amount(message: Message, state: FSMContext) -> None:
     try:
         amount = Decimal(message.text.replace(",", "").strip())
         if amount <= 0:
             raise InvalidOperation
     except Exception:
-        await message.answer("Enter a positive numeric amount.")
+        await respond_to_message(message, "Enter a positive numeric amount.")
         return
     data = await state.get_data()
     await state.update_data(amount=str(amount))
     await state.set_state(OrderFlow.choosing_payment_method)
-    await message.answer("Choose method:", reply_markup=method_keyboard(int(data["order_id"]), "split"))
+    await respond_to_message(message, "Choose method:", reply_markup=method_keyboard(int(data["order_id"]), "split"))
 
 
 @router.callback_query(F.data.startswith("pm:"))
@@ -405,18 +478,18 @@ async def choose_price_item(callback: CallbackQuery, state: FSMContext, session:
     await callback.answer()
 
 
-@router.message(OrderFlow.entering_custom_price, F.text)
+@router.message(OrderFlow.entering_custom_price, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
 async def enter_custom_price(message: Message, state: FSMContext, session: AsyncSession) -> None:
     try:
         price = Decimal(message.text.replace(",", "").strip())
         if price < 0:
             raise InvalidOperation
     except Exception:
-        await message.answer("Enter a non-negative numeric price in THB.")
+        await respond_to_message(message, "Enter a non-negative numeric price in THB.")
         return
     data = await state.get_data()
     order = await update_item_unit_price(session, int(data["order_id"]), int(data["item_id"]), price)
-    await message.answer(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
+    await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
     await state.clear()
 
 
@@ -429,7 +502,7 @@ async def mark_shipped(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
-@router.message(OrderFlow.entering_tracking, F.text)
+@router.message(OrderFlow.entering_tracking, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
 async def enter_tracking(message: Message, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
     order = await get_order(session, int(data["order_id"]))
@@ -437,7 +510,7 @@ async def enter_tracking(message: Message, state: FSMContext, session: AsyncSess
     order.tracking_number = message.text.strip()
     await session.flush()
     order = await get_order(session, order.id)
-    await message.answer(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
+    await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
     await state.clear()
 
 

@@ -31,6 +31,7 @@ BOT_TOKEN=your_telegram_bot_token
 GEMINI_API_KEY=your_gemini_key
 GEMINI_MODEL=gemini-1.5-flash
 ALLOWED_USERS=123456789,987654321
+ALLOWED_CHATS=-1001234567890
 
 POSTGRES_DB=orderbot
 POSTGRES_USER=orderbot
@@ -94,4 +95,3 @@ python main.py
 ```bash
 python -m migration.migrate --file result.json
 ```
-

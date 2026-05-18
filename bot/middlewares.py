@@ -8,8 +8,9 @@ from db import SessionLocal
 
 
 class AllowedUsersMiddleware(BaseMiddleware):
-    def __init__(self, allowed_users: set[int]) -> None:
+    def __init__(self, allowed_users: set[int], allowed_chats: set[int]) -> None:
         self.allowed_users = allowed_users
+        self.allowed_chats = allowed_chats
 
     async def __call__(
         self,
@@ -18,7 +19,17 @@ class AllowedUsersMiddleware(BaseMiddleware):
         data: dict[str, Any],
     ) -> Any:
         user = data.get("event_from_user")
-        if self.allowed_users and (user is None or user.id not in self.allowed_users):
+        chat = None
+        if isinstance(event, Message):
+            chat = event.chat
+        elif isinstance(event, CallbackQuery) and event.message:
+            chat = event.message.chat
+
+        user_allowed = user is not None and user.id in self.allowed_users
+        chat_allowed = chat is not None and chat.id in self.allowed_chats
+        whitelist_enabled = bool(self.allowed_users or self.allowed_chats)
+
+        if whitelist_enabled and not (user_allowed or chat_allowed):
             if isinstance(event, CallbackQuery):
                 await event.answer()
             return None
@@ -41,4 +52,3 @@ class DbSessionMiddleware(BaseMiddleware):
             except Exception:
                 await session.rollback()
                 raise
-

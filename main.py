@@ -3,6 +3,7 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.strategy import FSMStrategy
 
 from bot.middlewares import AllowedUsersMiddleware, DbSessionMiddleware
 from config import get_settings
@@ -22,9 +23,9 @@ async def main() -> None:
         await session.commit()
 
     bot = Bot(token=settings.bot_token)
-    dp = Dispatcher(storage=MemoryStorage())
-    dp.message.middleware(AllowedUsersMiddleware(settings.allowed_users))
-    dp.callback_query.middleware(AllowedUsersMiddleware(settings.allowed_users))
+    dp = Dispatcher(storage=MemoryStorage(), fsm_strategy=FSMStrategy.USER_IN_CHAT)
+    dp.message.middleware(AllowedUsersMiddleware(settings.allowed_users, settings.allowed_chats))
+    dp.callback_query.middleware(AllowedUsersMiddleware(settings.allowed_users, settings.allowed_chats))
     dp.update.middleware(DbSessionMiddleware())
     dp.include_router(router)
 
