@@ -38,7 +38,8 @@ SYSTEM_INSTRUCTION = (
     "NEVER copy the whole text here! If no shop name is mentioned in the text, set it to null.\n"
     "2. `items`: Extract every single ordered product into this array.\n"
     "   - `product_name`: Standardize to 'Gummies', 'Brownie', 'Cookie', or 'Drops' (e.g., 'гамми', 'гамме' -> 'Gummies').\n"
-    "   - `dosage`: Extract ONLY the integer number of milligrams (e.g., '500мг' -> 500). If not mentioned -> null.\n"
+    "   - `dosage`: Extract ONLY the integer number of milligrams (e.g., '500мг' -> 500).\n"
+    "     If the user orders 'gummies' (мармелад), 'brownie' (брауни), or 'cookie' (печенье) WITHOUT specifying milligrams, you MUST automatically set `dosage` to 100. Never leave it null or skip the item.\n"
     "   - `flavor`: Extract the flavor string (e.g., 'клубника', 'strawberry'). If not mentioned -> null.\n"
     "   - `quantity`: Extract the exact integer count.\n"
     "   - `is_gift`: Set to true ONLY if words like 'бонус', 'подарок', 'на пробу', 'gift' are near the item.\n"
@@ -73,7 +74,20 @@ SYSTEM_INSTRUCTION = (
     "  \"items\": [\n"
     "    {\"product_name\": \"Gummies\", \"dosage\": 250, \"flavor\": null, \"quantity\": 5, \"is_gift\": false},\n"
     "    {\"product_name\": \"Gummies\", \"dosage\": 500, \"flavor\": null, \"quantity\": 15, \"is_gift\": false},\n"
-    "    {\"product_name\": \"Brownie\", \"dosage\": null, \"flavor\": null, \"quantity\": 20, \"is_gift\": false}\n"
+    "    {\"product_name\": \"Brownie\", \"dosage\": 100, \"flavor\": null, \"quantity\": 20, \"is_gift\": false}\n"
+    "  ],\n"
+    "  \"suggested_payment_method\": null,\n"
+    "  \"total_amount\": null\n"
+    "}\n"
+    "\n"
+    "Input: 'gummies 500mg 30 pcs\\nbrownie 15\\ngummies 30'\n"
+    "Output:\n"
+    "{\n"
+    "  \"shop_name\": null,\n"
+    "  \"items\": [\n"
+    "    {\"product_name\": \"Gummies\", \"dosage\": 500, \"flavor\": null, \"quantity\": 30, \"is_gift\": false},\n"
+    "    {\"product_name\": \"Brownie\", \"dosage\": 100, \"flavor\": null, \"quantity\": 15, \"is_gift\": false},\n"
+    "    {\"product_name\": \"Gummies\", \"dosage\": 100, \"flavor\": null, \"quantity\": 30, \"is_gift\": false}\n"
     "  ],\n"
     "  \"suggested_payment_method\": null,\n"
     "  \"total_amount\": null\n"
@@ -262,6 +276,14 @@ def _parse_dosage(match: re.Match[str] | None) -> int | None:
     return int(amount * 1000) if unit in {"g", "г", "гр"} else int(amount)
 
 
+def _default_dosage(product_name: str, dosage: int | None) -> int | None:
+    if dosage is not None:
+        return dosage
+    if _standardize_product_name(product_name) in {"Gummies", "Brownie", "Cookie"}:
+        return 100
+    return None
+
+
 def _extract_inline_shop_name(text: str) -> str | None:
     patterns = [
         r"(?:\bв|для|to|for)\s+([a-zA-Zа-яА-Я0-9 ._-]{2,40}?)(?:[,.;]|\s+(?:оплата|paid|налик|наличные|перевод|карта|банк|total|итого)|$)",
@@ -292,12 +314,16 @@ def _extract_quantity(line: str) -> int:
         match = re.search(pattern, low, flags=re.I)
         if match:
             return int(match.group(1))
+    without_dosage = re.sub(r"\d+(?:[\.,]\d+)?\s*(?:mg|мг|g|гр|г)(?![a-zа-я])", "", low)
+    bare_quantity = re.search(r"\b(\d+)\b", without_dosage)
+    if bare_quantity and any(alias in low for alias in PRODUCT_ALIASES):
+        return int(bare_quantity.group(1))
     return 1
 
 
 def _has_quantity_signal(line: str) -> bool:
     low = line.lower()
-    return any(
+    explicit_quantity = any(
         re.search(pattern, low, flags=re.I)
         for pattern in (
             r"\d+\s*(?:пачек|пачки|packs?|pcs?|pieces?|шт|штук|уп)",
@@ -305,6 +331,10 @@ def _has_quantity_signal(line: str) -> bool:
             r"\d+\s*x",
         )
     )
+    if explicit_quantity:
+        return True
+    without_dosage = re.sub(r"\d+(?:[\.,]\d+)?\s*(?:mg|мг|g|гр|г)(?![a-zа-я])", "", low)
+    return bool(re.search(r"\b\d+\b", without_dosage) and any(alias in low for alias in PRODUCT_ALIASES))
 
 
 def _extract_product_name(line: str, current_product: str | None) -> str:
@@ -362,7 +392,7 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
                 items.append(
                     OrderItem(
                         product_name=product_name,
-                        dosage=None,
+                        dosage=_default_dosage(product_name, None),
                         flavor=next((flavor for flavor in FLAVORS if flavor in segment_low), None),
                         quantity=int(quantity_match.group(1)),
                         is_gift=any(word in segment_low for word in GIFT_WORDS),
@@ -397,7 +427,7 @@ def _parse_item_line(line: str, current_product: str | None) -> tuple[OrderItem 
     product_name = _extract_product_name(line, current_product)
     item = OrderItem(
         product_name=product_name,
-        dosage=_parse_dosage(dosage_match),
+        dosage=_default_dosage(product_name, _parse_dosage(dosage_match)),
         flavor=next((flavor for flavor in FLAVORS if flavor in low), None),
         quantity=_extract_quantity(line),
         is_gift=any(word in low for word in GIFT_WORDS),
@@ -472,6 +502,7 @@ def _merge_with_fallback(
         extracted.total_amount = fallback.total_amount
     for item in extracted.items:
         item.product_name = _standardize_product_name(item.product_name)
+        item.dosage = _default_dosage(item.product_name, item.dosage)
     return extracted
 
 

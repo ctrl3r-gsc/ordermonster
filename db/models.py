@@ -51,9 +51,6 @@ class Product(Base):
     potency_type: Mapped[str | None] = mapped_column(String(50))
     sku: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     price: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
-    price_up_to_10: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
-    price_10_to_30: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
-    price_30_plus: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     items: Mapped[list["OrderItem"]] = relationship(back_populates="product")

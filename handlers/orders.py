@@ -221,21 +221,14 @@ def dashboard_summary_text(orders) -> str:
     today_count = sum(1 for order in orders if is_today_order(order))
     pending_deliveries = sum(1 for order in orders if order.delivery_status != DeliveryStatus.delivered)
     processing_payments = sum(1 for order in orders if order.payment_status.value != "paid")
-    older_active = sum(
-        1
-        for order in orders
-        if not is_today_order(order)
-        and (order.delivery_status != DeliveryStatus.delivered or order.payment_status.value != "paid")
-    )
     return "\n".join(
         [
             "<b>Dashboard</b>",
             f"Today orders: <b>{today_count}</b>",
-            f"Older active orders: <b>{older_active}</b>",
             f"Pending deliveries: <b>{pending_deliveries}</b>",
             f"Processing payments: <b>{processing_payments}</b>",
             "",
-            "Active worklist:",
+            "Latest 10 orders from today:",
         ]
     )
 
@@ -243,9 +236,8 @@ def dashboard_summary_text(orders) -> str:
 def dashboard_keyboard(orders) -> InlineKeyboardMarkup:
     rows = []
     for order in orders:
-        prefix = "Today" if is_today_order(order) else "Older"
         text = (
-            f"#{order.id} {order.shop.name[:20]} | {prefix} | "
+            f"#{order.id} {order.shop.name[:24]} | "
             f"{order.delivery_status.value} | {order.payment_status.value}"
         )
         rows.append([InlineKeyboardButton(text=text[:64], callback_data=f"ord:{order.id}")])
@@ -261,7 +253,7 @@ async def start(message: Message) -> None:
 async def dashboard(message: Message, session: AsyncSession) -> None:
     orders = await dashboard_orders(session)
     if not orders:
-        await respond_to_message(message, "No dashboard orders for today and no older unfinished orders.")
+        await respond_to_message(message, "No dashboard orders for today.")
         return
     await respond_to_message(message, dashboard_summary_text(orders), reply_markup=dashboard_keyboard(orders), parse_mode="HTML")
 
@@ -270,7 +262,7 @@ async def dashboard(message: Message, session: AsyncSession) -> None:
 async def dashboard_cb(callback: CallbackQuery, session: AsyncSession) -> None:
     orders = await dashboard_orders(session)
     if not orders:
-        await callback.message.edit_text("No dashboard orders for today and no older unfinished orders.")
+        await callback.message.edit_text("No dashboard orders for today.")
         await callback.answer()
         return
     await callback.message.edit_text(

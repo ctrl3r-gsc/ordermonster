@@ -148,23 +148,17 @@ async def get_or_create_product(
     flavor: str | None,
     price: Decimal | int | str = Decimal("0"),
     potency_type: str | None = None,
-    price_up_to_10: Decimal | int | str | None = None,
-    price_10_to_30: Decimal | int | str | None = None,
-    price_30_plus: Decimal | int | str | None = None,
     is_active: bool = True,
     force_update: bool = True,
 ) -> Product:
     sku = make_sku(name, dosage, flavor)
-    base_price = Decimal(str(price_up_to_10 if price_up_to_10 is not None else price))
+    base_price = Decimal(str(price))
     product = await session.scalar(select(Product).where(Product.sku == sku))
     if product:
         if base_price > 0 and (force_update or decimal_money(product.price) == 0):
             product.price = base_price
         if force_update:
             product.potency_type = potency_type or product.potency_type
-            product.price_up_to_10 = Decimal(str(price_up_to_10)) if price_up_to_10 is not None else product.price_up_to_10
-            product.price_10_to_30 = Decimal(str(price_10_to_30)) if price_10_to_30 is not None else product.price_10_to_30
-            product.price_30_plus = Decimal(str(price_30_plus)) if price_30_plus is not None else product.price_30_plus
             product.is_active = is_active
         return product
     product = Product(
@@ -174,9 +168,6 @@ async def get_or_create_product(
         potency_type=potency_type,
         sku=sku,
         price=base_price,
-        price_up_to_10=Decimal(str(price_up_to_10)) if price_up_to_10 is not None else base_price,
-        price_10_to_30=Decimal(str(price_10_to_30)) if price_10_to_30 is not None else None,
-        price_30_plus=Decimal(str(price_30_plus)) if price_30_plus is not None else None,
         is_active=is_active,
     )
     session.add(product)
@@ -335,19 +326,16 @@ def dashboard_day_bounds() -> tuple[datetime, datetime]:
 
 
 async def dashboard_orders(session: AsyncSession) -> list[Order]:
-    today_start, tomorrow_start = dashboard_day_bounds()
-    is_today = and_(Order.created_at >= today_start, Order.created_at < tomorrow_start)
-    is_incomplete = (Order.delivery_status != DeliveryStatus.delivered) | (Order.payment_status != PaymentStatus.paid)
-    is_older_incomplete = and_(Order.created_at < today_start, is_incomplete)
+    today_start, _ = dashboard_day_bounds()
 
     return list(
         (
             await session.scalars(
                 select(Order)
-                .where(or_(is_today, is_older_incomplete))
+                .where(Order.created_at >= today_start)
                 .options(selectinload(Order.shop))
                 .order_by(Order.created_at.desc(), Order.updated_at.desc())
-                .limit(100)
+                .limit(10)
             )
         ).all()
     )

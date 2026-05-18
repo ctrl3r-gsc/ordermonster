@@ -19,12 +19,8 @@ async def seed_current_catalog(session: AsyncSession, path: Path = DEFAULT_CATAL
             item["name"],
             item.get("dosage"),
             item.get("flavor"),
-            price=item.get("price_up_to_10") or 0,
+            price=item.get("price") or 0,
             potency_type=item.get("potency_type"),
-            price_up_to_10=item.get("price_up_to_10"),
-            price_10_to_30=item.get("price_10_to_30"),
-            price_30_plus=item.get("price_30_plus"),
             is_active=bool(item.get("is_active", True)),
         )
     return len(products)
-
