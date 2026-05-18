@@ -1,4 +1,5 @@
 from decimal import Decimal, InvalidOperation
+from html import escape
 
 from aiogram import F, Router
 from aiogram.filters import Command, StateFilter
@@ -10,10 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import DeliveryStatus, Shop
 from services.orders import (
     add_payment,
+    all_shops,
     create_order_from_parsed,
     dashboard_orders,
     get_or_create_shop,
     get_order,
+    item_subtotal,
+    item_unit_price,
+    match_existing_shop_name,
     paid_amount,
     remaining_amount,
     top_shops,
@@ -34,37 +39,69 @@ class OrderFlow(StatesGroup):
 
 def money(value: Decimal | int | str | None) -> str:
     if value is None:
-        return "unknown"
+        return "0"
     amount = Decimal(str(value))
     return f"{amount:,.2f}".rstrip("0").rstrip(".")
 
 
+def payment_label(order) -> str:
+    if order.payment_status.value == "paid":
+        return f"✅ Paid ({money(paid_amount(order))} THB)"
+    if order.payment_status.value == "partially_paid":
+        return f"🟡 Partially Paid: {money(paid_amount(order))} / {money(order.total_amount)} THB"
+    return "⏳ Processing"
+
+
+def delivery_label(order) -> str:
+    if order.delivery_status == DeliveryStatus.delivered:
+        return "✅ Delivered"
+    if order.delivery_status == DeliveryStatus.shipped:
+        tracking = f" ({escape(order.tracking_number)})" if order.tracking_number else ""
+        return f"📦 Shipped{tracking}"
+    return "⏳ Pending Shipment"
+
+
+def product_display_name(product) -> str:
+    return escape(" ".join(str(product.name).split()).title())
+
+
 def order_card_text(order) -> str:
     lines = [
-        f"Order #{order.id}",
-        f"Shop: {order.shop.name}",
-        f"Delivery: {order.delivery_status.value}",
-        f"Payment: {order.payment_status.value}",
+        f"📦 <b>Order # {order.id}</b>",
+        f"🏪 Shop: <b>{escape(order.shop.name)}</b>",
+        f"📍 Address: {escape(order.shop.address) if order.shop.address else 'not specified'}",
+        "",
+        "🛍 <b>Items:</b>",
     ]
-    if order.tracking_number:
-        lines.append(f"Tracking: {order.tracking_number}")
-    lines.append("")
-    lines.append("Items:")
     for item in order.items:
         product = item.product
-        bits = [product.name]
-        if product.dosage:
-            bits.append(f"{product.dosage}mg")
-        if product.flavor:
-            bits.append(product.flavor)
-        gift = " gift" if item.is_gift else ""
-        lines.append(f"- {' '.join(bits)} x{item.quantity}{gift}")
+        if item.is_gift:
+            details = []
+            if product.flavor:
+                details.append(f"({escape(product.flavor)})")
+            if product.dosage:
+                details.append(f"{product.dosage}mg")
+            suffix = f" {' '.join(details)}" if details else ""
+            lines.append(f"• {product_display_name(product)}{suffix} (Gift 🎁) — {item.quantity} pcs = <b>0 THB</b>")
+            continue
+
+        flavor = f" ({escape(product.flavor)})" if product.flavor else ""
+        dosage = f" {product.dosage}mg" if product.dosage else ""
+        unit_price = item_unit_price(item)
+        subtotal = item_subtotal(item)
+        lines.append(
+            f"• {product_display_name(product)}{flavor}{dosage} — "
+            f"{item.quantity} pcs x {money(unit_price)} THB = <b>{money(subtotal)} THB</b>"
+        )
     lines.extend(
         [
             "",
-            f"Total: {money(order.total_amount)}",
-            f"Paid: {money(paid_amount(order))}",
-            f"Remaining: {money(remaining_amount(order))}",
+            f"💵 <b>Total Amount: {money(order.total_amount)} THB</b>",
+            f"💳 Payment: {payment_label(order)}",
+            f"🚚 Delivery: {delivery_label(order)}",
+            "",
+            f"Paid: {money(paid_amount(order))} THB",
+            f"Remaining: {money(remaining_amount(order))} THB",
         ]
     )
     return "\n".join(lines)
@@ -126,7 +163,9 @@ def delivery_keyboard(order_id: int) -> InlineKeyboardMarkup:
 async def show_order_card(target: Message, session: AsyncSession, order_id: int) -> None:
     order = await get_order(session, order_id)
     delivered = order.delivery_status == DeliveryStatus.delivered
-    await target.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order.id, delivered=delivered))
+    await target.edit_text(
+        order_card_text(order), reply_markup=order_card_keyboard(order.id, delivered=delivered), parse_mode="HTML"
+    )
 
 
 @router.message(Command("start"))
@@ -169,17 +208,27 @@ async def dashboard_cb(callback: CallbackQuery, session: AsyncSession) -> None:
 
 @router.message(StateFilter(None), F.text)
 async def parse_new_order(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    parsed = await parse_order_text(message.text)
+    shops = await all_shops(session)
+    parsed = await parse_order_text(message.text, [shop.name for shop in shops])
     if not parsed.get("items"):
         await message.answer("I could not find order items in that message.")
         return
     await state.update_data(parsed=parsed)
     shop_name = parsed.get("shop_name")
     if shop_name:
-        shop = await get_or_create_shop(session, shop_name)
-        order = await create_order_from_parsed(session, parsed, shop, message.from_user.id)
-        await message.answer(order_card_text(order), reply_markup=order_card_keyboard(order.id))
-        await state.clear()
+        matched_shop = match_existing_shop_name(shop_name, shops)
+        if matched_shop:
+            parsed["shop_name"] = matched_shop.name
+            order = await create_order_from_parsed(session, parsed, matched_shop, message.from_user.id)
+            await message.answer(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
+            await state.clear()
+            return
+        await state.update_data(shop_name=shop_name)
+        await state.set_state(OrderFlow.entering_shop_address)
+        await message.answer(
+            f"Shop '{escape(shop_name)}' not found. Create it?\nType the physical address to create this shop.",
+            parse_mode="HTML",
+        )
         return
     shops = await top_shops(session)
     await state.set_state(OrderFlow.choosing_shop)
@@ -210,7 +259,7 @@ async def choose_shop(callback: CallbackQuery, state: FSMContext, session: Async
         await callback.answer()
         return
     order = await create_order_from_parsed(session, parsed, selected, callback.from_user.id)
-    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order.id))
+    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
     await state.clear()
     await callback.answer()
 
@@ -232,7 +281,7 @@ async def enter_shop_address(message: Message, state: FSMContext, session: Async
         return
     shop = await get_or_create_shop(session, data["shop_name"], message.text.strip())
     order = await create_order_from_parsed(session, parsed, shop, message.from_user.id)
-    await message.answer(order_card_text(order), reply_markup=order_card_keyboard(order.id))
+    await message.answer(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
     await state.clear()
 
 
@@ -295,7 +344,7 @@ async def choose_payment_method(callback: CallbackQuery, state: FSMContext, sess
         await callback.answer()
         return
     order = await add_payment(session, order, method, amount)
-    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order.id))
+    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
     await state.clear()
     await callback.answer()
 
@@ -324,7 +373,7 @@ async def enter_tracking(message: Message, state: FSMContext, session: AsyncSess
     order.tracking_number = message.text.strip()
     await session.flush()
     order = await get_order(session, order.id)
-    await message.answer(order_card_text(order), reply_markup=order_card_keyboard(order.id))
+    await message.answer(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
     await state.clear()
 
 
@@ -334,5 +383,7 @@ async def mark_delivered(callback: CallbackQuery, session: AsyncSession) -> None
     order.delivery_status = DeliveryStatus.delivered
     await session.flush()
     order = await get_order(session, order.id)
-    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order.id, delivered=True))
+    await callback.message.edit_text(
+        order_card_text(order), reply_markup=order_card_keyboard(order.id, delivered=True), parse_mode="HTML"
+    )
     await callback.answer()

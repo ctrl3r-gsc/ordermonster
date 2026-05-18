@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from difflib import SequenceMatcher
 from typing import Literal
 
 from google import genai
@@ -68,6 +69,21 @@ SYSTEM_INSTRUCTION = (
 )
 
 
+def _build_system_instruction(existing_shops: list[str] | None = None) -> str:
+    if not existing_shops:
+        return SYSTEM_INSTRUCTION
+    shop_list = ", ".join(f"'{shop}'" for shop in existing_shops if shop)
+    return (
+        f"{SYSTEM_INSTRUCTION}\n\n"
+        f"VALID EXISTING SHOPS:\n"
+        f"Here is a list of valid existing shops: {shop_list}. "
+        "If the input text contains a misspelled, shorthand, or lowercase version of one of these shops "
+        "(e.g., 'шман' or 'shaman' for 'SHAMAN'), you MUST automatically correct it and return the EXACT "
+        "name from this list in the `shop_name` field. If none of these shops are mentioned, keep the extracted "
+        "new shop name or null according to the schema rules."
+    )
+
+
 PRODUCT_ALIASES = {
     "gummy": "Gummies",
     "gummies": "Gummies",
@@ -119,6 +135,96 @@ def _normalize_payment(text: str) -> str | None:
 def _to_number(value: str | None) -> float | None:
     if not value:
         return None
+
+
+def _normalize_shop_name(value: str | None) -> str:
+    if not value:
+        return ""
+    translit = str.maketrans(
+        {
+            "а": "a",
+            "б": "b",
+            "в": "v",
+            "г": "g",
+            "д": "d",
+            "е": "e",
+            "ё": "e",
+            "ж": "zh",
+            "з": "z",
+            "и": "i",
+            "й": "y",
+            "к": "k",
+            "л": "l",
+            "м": "m",
+            "н": "n",
+            "о": "o",
+            "п": "p",
+            "р": "r",
+            "с": "s",
+            "т": "t",
+            "у": "u",
+            "ф": "f",
+            "х": "h",
+            "ц": "ts",
+            "ч": "ch",
+            "ш": "sh",
+            "щ": "sch",
+            "ы": "y",
+            "э": "e",
+            "ю": "yu",
+            "я": "ya",
+            "ь": "",
+            "ъ": "",
+        }
+    )
+    return re.sub(r"[^a-z0-9]+", "", value.lower().translate(translit))
+
+
+def _best_existing_shop_match(candidate: str | None, existing_shops: list[str] | None) -> str | None:
+    normalized = _normalize_shop_name(candidate)
+    if not normalized or not existing_shops:
+        return None
+
+    best_name: str | None = None
+    best_score = 0.0
+    for shop in existing_shops:
+        shop_normalized = _normalize_shop_name(shop)
+        if not shop_normalized:
+            continue
+        if normalized == shop_normalized:
+            return shop
+        if normalized in shop_normalized or shop_normalized in normalized:
+            score = 0.92
+        else:
+            score = SequenceMatcher(None, normalized, shop_normalized).ratio()
+        if score > best_score:
+            best_score = score
+            best_name = shop
+    return best_name if best_score >= 0.76 else None
+
+
+def _best_shop_mentioned_in_text(text: str, existing_shops: list[str] | None) -> str | None:
+    if not existing_shops:
+        return None
+    normalized_text = _normalize_shop_name(text)
+    for shop in existing_shops:
+        shop_normalized = _normalize_shop_name(shop)
+        if shop_normalized and shop_normalized in normalized_text:
+            return shop
+
+    tokens = [token for token in re.split(r"[^a-zа-я0-9]+", text.lower()) if len(token) >= 3]
+    best_name: str | None = None
+    best_score = 0.0
+    for shop in existing_shops:
+        shop_normalized = _normalize_shop_name(shop)
+        if not shop_normalized:
+            continue
+        for token in tokens:
+            score = SequenceMatcher(None, _normalize_shop_name(token), shop_normalized).ratio()
+            if score > best_score:
+                best_score = score
+                best_name = shop
+    return best_name if best_score >= 0.82 else None
     try:
         return float(value.replace(",", "").replace(" ", ""))
     except ValueError:
@@ -215,7 +321,7 @@ def _parse_item_line(line: str, current_product: str | None) -> tuple[OrderItem 
     return item, product_name
 
 
-def fallback_parse_order_text(text: str) -> ExtractedOrder:
+def fallback_parse_order_text(text: str, existing_shops: list[str] | None = None) -> ExtractedOrder:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if lines and _line_looks_like_shop(lines[0]):
         shop_name = lines[0]
@@ -240,7 +346,9 @@ def fallback_parse_order_text(text: str) -> ExtractedOrder:
             items.append(item)
 
     return ExtractedOrder(
-        shop_name=shop_name,
+        shop_name=_best_existing_shop_match(shop_name, existing_shops)
+        or _best_shop_mentioned_in_text(text, existing_shops)
+        or shop_name,
         items=items,
         suggested_payment_method=payment,
         total_amount=total_amount,
@@ -255,9 +363,19 @@ def _is_bad_shop_name(shop_name: str | None, raw_text: str) -> bool:
     return "\n" in shop_name or len(compact_shop) > 80 or compact_shop == compact_raw
 
 
-def _merge_with_fallback(extracted: ExtractedOrder, fallback: ExtractedOrder, raw_text: str) -> ExtractedOrder:
+def _merge_with_fallback(
+    extracted: ExtractedOrder,
+    fallback: ExtractedOrder,
+    raw_text: str,
+    existing_shops: list[str] | None = None,
+) -> ExtractedOrder:
     if _is_bad_shop_name(extracted.shop_name, raw_text):
         extracted.shop_name = None
+    matched_shop = _best_existing_shop_match(extracted.shop_name, existing_shops) or _best_shop_mentioned_in_text(
+        raw_text, existing_shops
+    )
+    if matched_shop:
+        extracted.shop_name = matched_shop
     if not extracted.items and fallback.items:
         extracted.items = fallback.items
     if extracted.shop_name is None and fallback.shop_name and not _is_bad_shop_name(fallback.shop_name, raw_text):
@@ -271,10 +389,10 @@ def _merge_with_fallback(extracted: ExtractedOrder, fallback: ExtractedOrder, ra
     return extracted
 
 
-async def parse_order_text(text: str) -> dict:
+async def parse_order_text(text: str, existing_shops: list[str] | None = None) -> dict:
     settings = get_settings()
     api_key = os.getenv("GEMINI_API_KEY")
-    fallback = fallback_parse_order_text(text)
+    fallback = fallback_parse_order_text(text, existing_shops)
     if not api_key:
         return fallback.model_dump(mode="json")
 
@@ -284,7 +402,7 @@ async def parse_order_text(text: str) -> dict:
             model=settings.gemini_model,
             contents=text,
             config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTION,
+                system_instruction=_build_system_instruction(existing_shops),
                 response_mime_type="application/json",
                 response_schema=ExtractedOrder,
             ),
@@ -294,6 +412,6 @@ async def parse_order_text(text: str) -> dict:
             parsed = ExtractedOrder.model_validate(json.loads(response.text))
         elif not isinstance(parsed, ExtractedOrder):
             parsed = ExtractedOrder.model_validate(parsed)
-        return _merge_with_fallback(parsed, fallback, text).model_dump(mode="json")
+        return _merge_with_fallback(parsed, fallback, text, existing_shops).model_dump(mode="json")
     except Exception:
         return fallback.model_dump(mode="json")

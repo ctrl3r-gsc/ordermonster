@@ -147,14 +147,19 @@ async def migrate(path: Path, catalog_path: Path) -> None:
             order = Order(**order_kwargs)
             session.add(order)
             await session.flush()
+            calculated_total = Decimal("0.00")
             for item in parsed.items:
                 product = await get_or_create_product(session, item.product_name, item.dosage, item.flavor)
+                if not item.is_gift:
+                    calculated_total += Decimal(item.quantity) * Decimal(product.price or 0)
                 session.add(
                     OrderItem(order_id=order.id, product_id=product.id, quantity=item.quantity, is_gift=item.is_gift)
                 )
+            if not order.total_amount:
+                order.total_amount = calculated_total.quantize(Decimal("0.01"))
             method = detect_payment_method(text)
-            if method and parsed.total_amount:
-                session.add(OrderPayment(order_id=order.id, payment_method=method, amount=parsed.total_amount))
+            if method and order.total_amount:
+                session.add(OrderPayment(order_id=order.id, payment_method=method, amount=order.total_amount))
                 await session.flush()
                 order.payment_status = PaymentStatus.paid
             elif "credit" in text.lower() or "paid" not in text.lower():
