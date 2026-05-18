@@ -49,7 +49,8 @@ async def migrate(path: Path, catalog_path: Path) -> None:
         await session.execute(text("TRUNCATE TABLE products RESTART IDENTITY CASCADE;"))
         current_catalog_count = await seed_current_catalog(session, catalog_path)
 
-        export = json.loads(path.read_text(encoding="utf-8"))
+        json_content = path.read_text(encoding="utf-8")
+        export = json.loads(json_content)
         messages = export.get("messages", [])
         order_texts: list[tuple[dict[str, Any], str]] = []
 
@@ -60,8 +61,8 @@ async def migrate(path: Path, catalog_path: Path) -> None:
 
         created_orders = 0
         skipped_items = 0
-        for message, text in order_texts:
-            parsed = fallback_parse_order_text(text)
+        for message, raw_text in order_texts:
+            parsed = fallback_parse_order_text(raw_text)
             if not parsed.shop_name or not parsed.items:
                 continue
             existing_shop = await session.scalar(select(Shop).where(Shop.name == parsed.shop_name.strip()))
@@ -78,7 +79,7 @@ async def migrate(path: Path, catalog_path: Path) -> None:
             order_kwargs = {
                 "shop_id": shop.id,
                 "user_id": int(str(message.get("from_id", "0")).replace("user", "") or 0),
-                "delivery_status": detect_delivery_status(text),
+                "delivery_status": detect_delivery_status(raw_text),
                 "total_amount": Decimal("0.00"),
             }
             if message.get("date"):
@@ -101,12 +102,12 @@ async def migrate(path: Path, catalog_path: Path) -> None:
                     )
                 )
             order.total_amount = calculated_total.quantize(Decimal("0.01"))
-            method = detect_payment_method(text)
+            method = detect_payment_method(raw_text)
             if method and order.total_amount:
                 session.add(OrderPayment(order_id=order.id, payment_method=method, amount=order.total_amount))
                 await session.flush()
                 order.payment_status = PaymentStatus.paid
-            elif "credit" in text.lower() or "paid" not in text.lower():
+            elif "credit" in raw_text.lower() or "paid" not in raw_text.lower():
                 order.payment_status = PaymentStatus.unpaid
             created_orders += 1
 
