@@ -6,8 +6,9 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import DeliveryStatus, Order
-from services.orders import dashboard_orders, dashboard_day_bounds, format_dashboard_datetime
+from db.models import DeliveryStatus
+from handlers.orders import order_card_keyboard, order_card_text
+from services.orders import dashboard_orders, dashboard_day_bounds, format_dashboard_datetime, get_order
 
 router = Router()
 ORDER_CHAT_TYPES = (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP)
@@ -47,44 +48,25 @@ def dashboard_summary_text(orders) -> str:
     )
 
 
-def delivery_emoji(status) -> str:
-    if status == DeliveryStatus.delivered:
-        return "🚚"
-    return "⏳"
-
-
-def payment_emoji(payment_status) -> str:
-    if payment_status == "paid":
-        return "💰"
-    if payment_status == "partially_paid":
-        return "⚠️"
-    return "❌"
+def order_state_emoji(order) -> str:
+    if order.delivery_status == DeliveryStatus.delivered and order.payment_status.value == "paid":
+        return "✅"
+    return "⌛"
 
 
 def dashboard_button_text(order) -> str:
     created_at = format_dashboard_datetime(order.created_at).replace(" ", " (") + ")"
     shop_name = order.shop.name[:18]
-    delivery_part = delivery_emoji(order.delivery_status)
-    payment_part = payment_emoji(order.payment_status.value)
-    return f"#{order.id} | 📅 {created_at} | {shop_name} | {delivery_part} {payment_part}"[:64]
-
-
-def delete_confirmation_keyboard(order_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"confirm_del:{order_id}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=f"cancel_del:{order_id}")],
-        ]
-    )
+    return f"#{order.id} | 📅 {created_at} | {shop_name} | {order_state_emoji(order)}"[:64]
 
 
 def dashboard_keyboard(orders) -> InlineKeyboardMarkup:
-    rows = []
-    for order in orders:
-        rows.append(
-            [InlineKeyboardButton(text=dashboard_button_text(order), callback_data=f"dash_delete:{order.id}")]
-        )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=dashboard_button_text(order), callback_data=f"dash_order:{order.id}")]
+            for order in orders
+        ]
+    )
 
 
 @router.message(Command("dashboard"), F.chat.type.in_(ORDER_CHAT_TYPES))
@@ -100,13 +82,13 @@ async def dashboard_command(message: Message, session: AsyncSession) -> None:
             reply_markup=dashboard_keyboard(orders),
             parse_mode="HTML",
         )
-    except Exception as e:
+    except Exception:
         logging.exception("Dashboard command failed")
         await respond_to_message(message, "Ошибка загрузки дашборда. Попробуйте позже.")
 
 
-@router.callback_query(F.data.startswith("dash_delete:"))
-async def dashboard_delete(callback: CallbackQuery, session: AsyncSession) -> None:
+@router.callback_query(F.data.startswith("dash_order:"))
+async def dashboard_open_order(callback: CallbackQuery, session: AsyncSession) -> None:
     try:
         raw_order_id = callback.data.split(":", 1)[1]
         try:
@@ -115,33 +97,14 @@ async def dashboard_delete(callback: CallbackQuery, session: AsyncSession) -> No
             await callback.answer("Invalid order ID.", show_alert=True)
             return
 
-        order = await session.get(Order, order_id)
-        if order is None:
-            await callback.answer("Order not found.", show_alert=True)
-            return
-
+        order = await get_order(session, order_id)
+        delivered = order.delivery_status == DeliveryStatus.delivered
         await callback.message.edit_text(
-            f"Удалить заказ #{order_id}?",
-            reply_markup=delete_confirmation_keyboard(order_id),
+            text=order_card_text(order),
+            reply_markup=order_card_keyboard(order.id, delivered=delivered),
+            parse_mode="HTML",
         )
         await callback.answer()
-    except Exception as e:
-        logging.exception("Dashboard delete handler failed")
+    except Exception:
+        logging.exception("Dashboard order open handler failed")
         await callback.answer("Ошибка обработки запроса.", show_alert=True)
-    raw_order_id = callback.data.split(":", 1)[1]
-    try:
-        order_id = int(raw_order_id)
-    except ValueError:
-        await callback.answer("Invalid order ID.", show_alert=True)
-        return
-
-    order = await session.get(Order, order_id)
-    if order is None:
-        await callback.answer("Order not found.", show_alert=True)
-        return
-
-    await callback.message.edit_text(
-        f"Удалить заказ #{order_id}?",
-        reply_markup=delete_confirmation_keyboard(order_id),
-    )
-    await callback.answer()

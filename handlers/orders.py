@@ -10,7 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import DeliveryStatus, Order, Shop
+from db.models import DeliveryStatus, Order, PaymentStatus, Shop
 from services.orders import (
     add_payment,
     all_shops,
@@ -253,20 +253,10 @@ def dashboard_summary_text(orders) -> str:
     )
 
 
-def dashboard_delivery_emoji(status) -> str:
-    if status == DeliveryStatus.delivered:
+def dashboard_order_state_emoji(order) -> str:
+    if order.delivery_status == DeliveryStatus.delivered and order.payment_status.value == "paid":
         return "✅"
-    if status == DeliveryStatus.shipped:
-        return "🚚"
-    return "⏳"
-
-
-def dashboard_payment_emoji(payment_status) -> str:
-    if payment_status == "paid":
-        return "💰"
-    if payment_status == "partially_paid":
-        return "⚠️"
-    return "❌"
+    return "⌛"
 
 
 def dashboard_keyboard(orders) -> InlineKeyboardMarkup:
@@ -275,7 +265,7 @@ def dashboard_keyboard(orders) -> InlineKeyboardMarkup:
         created_at = format_dashboard_datetime(order.created_at).replace(" ", " (") + ")"
         text = (
             f"#{order.id} | 📅 {created_at} | {order.shop.name[:18]} | "
-            f"{dashboard_delivery_emoji(order.delivery_status)} {dashboard_payment_emoji(order.payment_status.value)}"
+            f"{dashboard_order_state_emoji(order)}"
         )
         rows.append([InlineKeyboardButton(text=text[:64], callback_data=f"ord:{order.id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -457,6 +447,9 @@ async def choose_payment_method(callback: CallbackQuery, state: FSMContext, sess
         await callback.answer()
         return
     updated_order = await add_payment(session, order, method, amount)
+    updated_order.payment_status = PaymentStatus.paid if mode == "full" else updated_order.payment_status
+    await session.commit()
+    await session.refresh(updated_order)
     updated_order = await get_order(session, updated_order.id)
     delivered = updated_order.delivery_status == DeliveryStatus.delivered
     updated_text = order_card_text(updated_order)

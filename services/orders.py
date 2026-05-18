@@ -105,7 +105,7 @@ def sanitize_shop_name(name: str | None) -> str:
     clean_name = EMOJI_RE.sub("", clean_name)
     clean_name = SHOP_SPECIAL_CHARS_RE.sub(" ", clean_name)
     clean_name = re.sub(r"\s+", " ", clean_name)
-    return clean_name.strip(" :-–—.,'’")
+    return clean_name.strip(" :-–—.,'’").upper()
 
 
 async def get_or_create_shop(session: AsyncSession, name: str, address: str | None = None) -> Shop:
