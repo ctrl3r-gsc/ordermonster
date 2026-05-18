@@ -20,6 +20,7 @@ from services.orders import (
     item_unit_price,
     match_existing_shop_name,
     paid_amount,
+    update_item_unit_price,
     remaining_amount,
     top_shops,
 )
@@ -35,6 +36,7 @@ class OrderFlow(StatesGroup):
     entering_split_amount = State()
     choosing_payment_method = State()
     entering_tracking = State()
+    entering_custom_price = State()
 
 
 def money(value: Decimal | int | str | None) -> str:
@@ -116,6 +118,7 @@ def order_card_keyboard(order_id: int, delivered: bool = False) -> InlineKeyboar
                 InlineKeyboardButton(text="Edit Delivery", callback_data=f"del:{order_id}"),
             ]
         )
+        rows.append([InlineKeyboardButton(text="✏️ Изменить цену / Edit Prices", callback_data=f"pr:{order_id}")])
     rows.append([InlineKeyboardButton(text="Dashboard", callback_data="dash")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -158,6 +161,21 @@ def delivery_keyboard(order_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Back", callback_data=f"ord:{order_id}")],
         ]
     )
+
+
+def edit_prices_keyboard(order) -> InlineKeyboardMarkup:
+    rows = []
+    for index, item in enumerate(order.items, start=1):
+        product = item.product
+        bits = [f"{index}.", product.name.title()]
+        if product.flavor:
+            bits.append(str(product.flavor))
+        if product.dosage:
+            bits.append(f"{product.dosage}mg")
+        bits.append(f"- {money(item_unit_price(item))} THB")
+        rows.append([InlineKeyboardButton(text=" ".join(bits)[:60], callback_data=f"pi:{order.id}:{item.id}")])
+    rows.append([InlineKeyboardButton(text="Back", callback_data=f"ord:{order.id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def show_order_card(target: Message, session: AsyncSession, order_id: int) -> None:
@@ -354,6 +372,52 @@ async def edit_delivery(callback: CallbackQuery) -> None:
     order_id = int(callback.data.split(":")[1])
     await callback.message.edit_text("Delivery options:", reply_markup=delivery_keyboard(order_id))
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pr:"))
+async def edit_prices(callback: CallbackQuery, session: AsyncSession) -> None:
+    order_id = int(callback.data.split(":")[1])
+    order = await get_order(session, order_id)
+    await callback.message.edit_text("Select item to edit price:", reply_markup=edit_prices_keyboard(order))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pi:"))
+async def choose_price_item(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    _, raw_order_id, raw_item_id = callback.data.split(":")
+    order = await get_order(session, int(raw_order_id))
+    item_id = int(raw_item_id)
+    item = next((order_item for order_item in order.items if order_item.id == item_id), None)
+    if item is None:
+        await callback.message.edit_text("Order item not found.", reply_markup=order_card_keyboard(order.id))
+        await callback.answer()
+        return
+    await state.update_data(order_id=order.id, item_id=item.id)
+    await state.set_state(OrderFlow.entering_custom_price)
+    product = item.product
+    label = product.name.title()
+    if product.dosage:
+        label += f" {product.dosage}mg"
+    await callback.message.edit_text(
+        f"Enter custom price per unit for this item (in THB):\n{escape(label)}",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(OrderFlow.entering_custom_price, F.text)
+async def enter_custom_price(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    try:
+        price = Decimal(message.text.replace(",", "").strip())
+        if price < 0:
+            raise InvalidOperation
+    except Exception:
+        await message.answer("Enter a non-negative numeric price in THB.")
+        return
+    data = await state.get_data()
+    order = await update_item_unit_price(session, int(data["order_id"]), int(data["item_id"]), price)
+    await message.answer(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
+    await state.clear()
 
 
 @router.callback_query(F.data.startswith("ship:"))

@@ -24,7 +24,7 @@ def decimal_money(value: Decimal | int | str | None) -> Decimal:
 def item_unit_price(item: OrderItem) -> Decimal:
     if item.is_gift:
         return Decimal("0.00")
-    return decimal_money(item.product.price)
+    return decimal_money(item.price_per_unit)
 
 
 def item_subtotal(item: OrderItem) -> Decimal:
@@ -32,7 +32,15 @@ def item_subtotal(item: OrderItem) -> Decimal:
 
 
 def calculate_order_total(order: Order) -> Decimal:
-    return sum((item_subtotal(item) for item in order.items), Decimal("0.00"))
+    return sum((item_subtotal(item) for item in order.items), Decimal("0.00")).quantize(Decimal("0.01"))
+
+
+def calculated_unit_price(product: Product, shop: Shop, is_gift: bool = False) -> Decimal:
+    if is_gift:
+        return Decimal("0.00")
+    base_price = decimal_money(product.price)
+    modifier = decimal_money(shop.price_modifier)
+    return max(Decimal("0.00"), base_price + modifier).quantize(Decimal("0.01"))
 
 
 async def get_or_create_shop(session: AsyncSession, name: str, address: str | None = None) -> Shop:
@@ -42,7 +50,7 @@ async def get_or_create_shop(session: AsyncSession, name: str, address: str | No
         if address and not shop.address:
             shop.address = address
         return shop
-    shop = Shop(name=clean_name, address=address)
+    shop = Shop(name=clean_name, address=address, price_modifier=Decimal("0.00"))
     session.add(shop)
     await session.flush()
     return shop
@@ -229,19 +237,45 @@ async def create_order_from_parsed(session: AsyncSession, parsed: dict, shop: Sh
                 item.get("flavor"),
                 force_update=False,
             )
+        unit_price = calculated_unit_price(product, shop, is_gift)
         if not is_gift:
-            calculated_total += Decimal(quantity) * decimal_money(product.price)
+            calculated_total += Decimal(quantity) * unit_price
         session.add(
             OrderItem(
                 order_id=order.id,
                 product_id=product.id,
                 quantity=quantity,
+                price_per_unit=unit_price,
                 is_gift=is_gift,
             )
         )
     order.total_amount = calculated_total.quantize(Decimal("0.01"))
     await session.flush()
     return await get_order(session, order.id)
+
+
+async def recalculate_order_total(session: AsyncSession, order: Order) -> Order:
+    order.total_amount = calculate_order_total(order)
+    refresh_payment_status(order)
+    await session.flush()
+    return await get_order(session, order.id)
+
+
+async def update_item_unit_price(
+    session: AsyncSession,
+    order_id: int,
+    item_id: int,
+    price_per_unit: Decimal,
+) -> Order:
+    order = await get_order(session, order_id)
+    target = next((item for item in order.items if item.id == item_id), None)
+    if target is None:
+        raise ValueError(f"Order item {item_id} not found in order {order_id}")
+    target.price_per_unit = max(Decimal("0.00"), decimal_money(price_per_unit))
+    target.is_gift = target.price_per_unit == 0
+    await session.flush()
+    order = await get_order(session, order_id)
+    return await recalculate_order_total(session, order)
 
 
 async def get_order(session: AsyncSession, order_id: int) -> Order:

@@ -1,0 +1,13 @@
+На локальном компьютере (Windows) в терминале VS Code:
+
+Bash
+git add .
+git commit -m "feat: auto shop matching and price calculation"
+git push origin main
+На сервере (Ubuntu) через SSH:
+
+Bash
+cd ~/ordermonster
+git pull origin main
+docker compose up --build -d
+После этого Docker пересоберет контейнер бота с новым кодом, автоматически подхватит обновленную логику цен и автоопределения магазинов, и всё сразу заработает в Telegram.

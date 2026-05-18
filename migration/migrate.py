@@ -14,7 +14,7 @@ from sqlalchemy import select
 from db import SessionLocal, init_db
 from db.models import DeliveryStatus, Order, OrderItem, OrderPayment, PaymentMethod, PaymentStatus, Shop
 from services.catalog import seed_current_catalog
-from services.orders import get_or_create_product, get_or_create_shop
+from services.orders import calculated_unit_price, get_or_create_product, get_or_create_shop
 from services.parser import fallback_parse_order_text
 
 
@@ -150,10 +150,17 @@ async def migrate(path: Path, catalog_path: Path) -> None:
             calculated_total = Decimal("0.00")
             for item in parsed.items:
                 product = await get_or_create_product(session, item.product_name, item.dosage, item.flavor)
+                unit_price = calculated_unit_price(product, shop, item.is_gift)
                 if not item.is_gift:
-                    calculated_total += Decimal(item.quantity) * Decimal(product.price or 0)
+                    calculated_total += Decimal(item.quantity) * unit_price
                 session.add(
-                    OrderItem(order_id=order.id, product_id=product.id, quantity=item.quantity, is_gift=item.is_gift)
+                    OrderItem(
+                        order_id=order.id,
+                        product_id=product.id,
+                        quantity=item.quantity,
+                        price_per_unit=unit_price,
+                        is_gift=item.is_gift,
+                    )
                 )
             if not order.total_amount:
                 order.total_amount = calculated_total.quantize(Decimal("0.01"))
