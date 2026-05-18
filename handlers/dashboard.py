@@ -1,3 +1,5 @@
+import logging
+
 from aiogram import F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command
@@ -60,11 +62,10 @@ def payment_emoji(payment_status) -> str:
 
 
 def dashboard_button_text(order) -> str:
-    id_part = f"# {order.id}".ljust(5)
-    shop_part = f"🏪 {order.shop.name[:18]}".ljust(22)
+    shop_name = order.shop.name[:16].ljust(16)
     delivery_part = delivery_emoji(order.delivery_status)
     payment_part = payment_emoji(order.payment_status.value)
-    return f"{id_part} | {shop_part} | {delivery_part} | {payment_part}"
+    return f"#{order.id} | 🏪 {shop_name} | {delivery_part} | {payment_part}"
 
 
 def delete_confirmation_keyboard(order_id: int) -> InlineKeyboardMarkup:
@@ -87,20 +88,45 @@ def dashboard_keyboard(orders) -> InlineKeyboardMarkup:
 
 @router.message(Command("dashboard"), F.chat.type.in_(ORDER_CHAT_TYPES))
 async def dashboard_command(message: Message, session: AsyncSession) -> None:
-    orders = await dashboard_orders(session)
-    if not orders:
-        await respond_to_message(message, "No dashboard orders for today.")
-        return
-    await respond_to_message(
-        message,
-        dashboard_summary_text(orders),
-        reply_markup=dashboard_keyboard(orders),
-        parse_mode="HTML",
-    )
+    try:
+        orders = await dashboard_orders(session)
+        if not orders:
+            await respond_to_message(message, "No dashboard orders for today.")
+            return
+        await respond_to_message(
+            message,
+            dashboard_summary_text(orders),
+            reply_markup=dashboard_keyboard(orders),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logging.exception("Dashboard command failed")
+        await respond_to_message(message, "Ошибка загрузки дашборда. Попробуйте позже.")
 
 
 @router.callback_query(F.data.startswith("dash_delete:"))
 async def dashboard_delete(callback: CallbackQuery, session: AsyncSession) -> None:
+    try:
+        raw_order_id = callback.data.split(":", 1)[1]
+        try:
+            order_id = int(raw_order_id)
+        except ValueError:
+            await callback.answer("Invalid order ID.", show_alert=True)
+            return
+
+        order = await session.get(Order, order_id)
+        if order is None:
+            await callback.answer("Order not found.", show_alert=True)
+            return
+
+        await callback.message.edit_text(
+            f"Удалить заказ #{order_id}?",
+            reply_markup=delete_confirmation_keyboard(order_id),
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.exception("Dashboard delete handler failed")
+        await callback.answer("Ошибка обработки запроса.", show_alert=True)
     raw_order_id = callback.data.split(":", 1)[1]
     try:
         order_id = int(raw_order_id)

@@ -24,8 +24,12 @@ async def main() -> None:
         await session.commit()
 
     bot = Bot(token=settings.bot_token)
-    await bot.set_my_commands([BotCommand(command="dashboard", description="Показать дашборд и управление заказами")])
+
+    async def on_startup(*_):
+        await bot.set_my_commands([BotCommand(command="dashboard", description="Показать дашборд и управление заказами")])
+
     dp = Dispatcher(storage=MemoryStorage(), fsm_strategy=FSMStrategy.USER_IN_CHAT)
+    dp.startup.register(on_startup)
     dp.message.middleware(AllowedUsersMiddleware(settings.allowed_users, settings.allowed_chats))
     dp.callback_query.middleware(AllowedUsersMiddleware(settings.allowed_users, settings.allowed_chats))
     dp.update.middleware(DbSessionMiddleware())
