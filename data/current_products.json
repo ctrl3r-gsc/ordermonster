@@ -1,0 +1,132 @@
+[
+  {
+    "name": "ultimate gummies",
+    "flavor": "Mango",
+    "dosage": 100,
+    "potency_type": "THC",
+    "price_up_to_10": 120,
+    "price_10_to_30": 100,
+    "price_30_plus": 80,
+    "is_active": true
+  },
+  {
+    "name": "ultimate gummies",
+    "flavor": "Green Apple",
+    "dosage": 250,
+    "potency_type": "THC",
+    "price_up_to_10": 210,
+    "price_10_to_30": 190,
+    "price_30_plus": 170,
+    "is_active": true
+  },
+  {
+    "name": "ultimate gummies",
+    "flavor": "Strawberry",
+    "dosage": 500,
+    "potency_type": "THC",
+    "price_up_to_10": 310,
+    "price_10_to_30": 290,
+    "price_30_plus": 270,
+    "is_active": true
+  },
+  {
+    "name": "x-hash gummies",
+    "flavor": "Pineapple",
+    "dosage": 150,
+    "potency_type": "hash",
+    "price_up_to_10": 190,
+    "price_10_to_30": 160,
+    "price_30_plus": 130,
+    "is_active": true
+  },
+  {
+    "name": "x-hash gummies",
+    "flavor": "Blackcurrant",
+    "dosage": 350,
+    "potency_type": "hash",
+    "price_up_to_10": 290,
+    "price_10_to_30": 260,
+    "price_30_plus": 230,
+    "is_active": true
+  },
+  {
+    "name": "x-hash gummies",
+    "flavor": "Watermelon",
+    "dosage": 600,
+    "potency_type": "hash",
+    "price_up_to_10": 390,
+    "price_10_to_30": 360,
+    "price_30_plus": 330,
+    "is_active": true
+  },
+  {
+    "name": "rosin gummies",
+    "flavor": "Green Apple",
+    "dosage": 250,
+    "potency_type": "rosin",
+    "price_up_to_10": 400,
+    "price_10_to_30": 350,
+    "price_30_plus": 300,
+    "is_active": true
+  },
+  {
+    "name": "breakfast cookies",
+    "flavor": null,
+    "dosage": 100,
+    "potency_type": "THC",
+    "price_up_to_10": 110,
+    "price_10_to_30": 90,
+    "price_30_plus": 70,
+    "is_active": true
+  },
+  {
+    "name": "brownie",
+    "flavor": null,
+    "dosage": 100,
+    "potency_type": "THC",
+    "price_up_to_10": 120,
+    "price_10_to_30": 100,
+    "price_30_plus": 80,
+    "is_active": true
+  },
+  {
+    "name": "cookies",
+    "flavor": null,
+    "dosage": 100,
+    "potency_type": "THC",
+    "price_up_to_10": 120,
+    "price_10_to_30": 100,
+    "price_30_plus": 80,
+    "is_active": true
+  },
+  {
+    "name": "hash",
+    "flavor": null,
+    "dosage": null,
+    "potency_type": null,
+    "price_up_to_10": null,
+    "price_10_to_30": null,
+    "price_30_plus": null,
+    "is_active": true
+  },
+  {
+    "name": "magic gummies",
+    "flavor": null,
+    "dosage": 1000,
+    "potency_type": "magic",
+    "price_up_to_10": 200,
+    "price_10_to_30": 200,
+    "price_30_plus": 200,
+    "is_active": true
+  },
+  {
+    "name": "magic gummies",
+    "flavor": null,
+    "dosage": 2000,
+    "potency_type": "magic",
+    "price_up_to_10": 400,
+    "price_10_to_30": 400,
+    "price_30_plus": 400,
+    "is_active": true
+  }
+]
