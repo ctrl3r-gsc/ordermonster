@@ -139,15 +139,21 @@ def order_card_text(order) -> str:
     return "\n".join(lines)
 
 
-def order_card_keyboard(order_id: int, delivered: bool = False) -> InlineKeyboardMarkup:
+def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardMarkup:
+    order = order_or_id if hasattr(order_or_id, "id") else None
+    order_id = order.id if order else int(order_or_id)
+    is_delivered = order.delivery_status == DeliveryStatus.delivered if order else delivered
+    is_paid = order.payment_status == PaymentStatus.paid if order else False
+    is_final = is_delivered and is_paid
     rows = []
-    if not delivered:
-        rows.append(
-            [
-                InlineKeyboardButton(text="Edit Payment", callback_data=f"pay:{order_id}"),
-                InlineKeyboardButton(text="Edit Delivery", callback_data=f"del:{order_id}"),
-            ]
-        )
+    if not is_final:
+        action_row = []
+        if not is_paid:
+            action_row.append(InlineKeyboardButton(text="Edit Payment", callback_data=f"pay:{order_id}"))
+        if not is_delivered:
+            action_row.append(InlineKeyboardButton(text="Edit Delivery", callback_data=f"del:{order_id}"))
+        if action_row:
+            rows.append(action_row)
         rows.append([InlineKeyboardButton(text="✏️ Изменить цену / Edit Prices", callback_data=f"pr:{order_id}")])
     rows.append([InlineKeyboardButton(text="Dashboard", callback_data="dash")])
     rows.append([InlineKeyboardButton(text="❌ Удалить заказ / Delete Order", callback_data=f"delete_order:{order_id}")])
@@ -220,9 +226,8 @@ def edit_prices_keyboard(order) -> InlineKeyboardMarkup:
 
 async def show_order_card(target: Message, session: AsyncSession, order_id: int) -> None:
     order = await get_order(session, order_id)
-    delivered = order.delivery_status == DeliveryStatus.delivered
     await target.edit_text(
-        order_card_text(order), reply_markup=order_card_keyboard(order.id, delivered=delivered), parse_mode="HTML"
+        order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML"
     )
 
 
@@ -310,7 +315,7 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
             parsed["shop_name"] = matched_shop.name
             order = await create_order_from_parsed(session, parsed, matched_shop, message.from_user.id)
             await state.clear()
-            await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
+            await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
             return
         await state.update_data(shop_name=shop_name)
         await state.set_state(OrderFlow.entering_shop_address)
@@ -355,7 +360,7 @@ async def choose_shop(callback: CallbackQuery, state: FSMContext, session: Async
         return
     order = await create_order_from_parsed(session, parsed, selected, callback.from_user.id)
     await state.clear()
-    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
+    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
     await callback.answer()
 
 
@@ -383,7 +388,7 @@ async def enter_shop_address(message: Message, state: FSMContext, session: Async
     shop = await get_or_create_shop(session, data["shop_name"], message.text.strip())
     order = await create_order_from_parsed(session, parsed, shop, message.from_user.id)
     await state.clear()
-    await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
+    await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
 
 
 @router.callback_query(F.data.startswith("ord:"))
@@ -449,9 +454,8 @@ async def choose_payment_method(callback: CallbackQuery, state: FSMContext, sess
     await session.commit()
     await session.refresh(updated_order)
     updated_order = await get_order(session, updated_order.id)
-    delivered = updated_order.delivery_status == DeliveryStatus.delivered
     updated_text = order_card_text(updated_order)
-    updated_markup = order_card_keyboard(updated_order.id, delivered=delivered)
+    updated_markup = order_card_keyboard(updated_order)
     await callback.message.edit_text(text=updated_text, reply_markup=updated_markup, parse_mode="HTML")
     await state.clear()
     await callback.answer()
@@ -560,7 +564,7 @@ async def choose_price_item(callback: CallbackQuery, state: FSMContext, session:
     item_id = int(raw_item_id)
     item = next((order_item for order_item in order.items if order_item.id == item_id), None)
     if item is None:
-        await callback.message.edit_text("Order item not found.", reply_markup=order_card_keyboard(order.id))
+        await callback.message.edit_text("Order item not found.", reply_markup=order_card_keyboard(order))
         await callback.answer()
         return
     await state.update_data(order_id=order.id, item_id=item.id)
@@ -587,7 +591,7 @@ async def enter_custom_price(message: Message, state: FSMContext, session: Async
         return
     data = await state.get_data()
     order = await update_item_unit_price(session, int(data["order_id"]), int(data["item_id"]), price)
-    await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
+    await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
     await state.clear()
 
 
@@ -608,7 +612,7 @@ async def enter_tracking(message: Message, state: FSMContext, session: AsyncSess
     order.tracking_number = message.text.strip()
     await session.flush()
     order = await get_order(session, order.id)
-    await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order.id), parse_mode="HTML")
+    await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
     await state.clear()
 
 
@@ -619,6 +623,6 @@ async def mark_delivered(callback: CallbackQuery, session: AsyncSession) -> None
     await session.flush()
     order = await get_order(session, order.id)
     await callback.message.edit_text(
-        order_card_text(order), reply_markup=order_card_keyboard(order.id, delivered=True), parse_mode="HTML"
+        order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML"
     )
     await callback.answer()
