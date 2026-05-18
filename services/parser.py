@@ -6,7 +6,7 @@ from typing import Literal
 
 from google import genai
 from google.genai import types
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from config import get_settings
 
@@ -17,6 +17,17 @@ class OrderItem(BaseModel):
     flavor: str | None = None
     quantity: int = Field(ge=1)
     is_gift: bool = False
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def ensure_minimum_quantity(cls, v):
+        if v is None:
+            return 1
+        try:
+            val = int(v)
+            return val if val >= 1 else 1
+        except (ValueError, TypeError):
+            return 1
 
 
 class ExtractedOrder(BaseModel):
