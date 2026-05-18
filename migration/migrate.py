@@ -16,15 +16,15 @@ from services.orders import calculated_unit_price, find_product_for_item, get_or
 from services.parser import fallback_parse_order_text
 
 
-def text_from_message(message: dict[str, Any]) -> str:
-    text = message.get("text", "")
-    if isinstance(text, list):
-        return "".join(part if isinstance(part, str) else part.get("text", "") for part in text)
-    return text if isinstance(text, str) else ""
+def message_body_from_message(message: dict[str, Any]) -> str:
+    content = message.get("text", "")
+    if isinstance(content, list):
+        return "".join(part if isinstance(part, str) else part.get("text", "") for part in content)
+    return content if isinstance(content, str) else ""
 
 
-def detect_delivery_status(text: str) -> DeliveryStatus:
-    low = text.lower()
+def detect_delivery_status(message_body: str) -> DeliveryStatus:
+    low = message_body.lower()
     if "delivered" in low:
         return DeliveryStatus.delivered
     if "track" in low or "shipped" in low or "sent" in low:
@@ -32,8 +32,8 @@ def detect_delivery_status(text: str) -> DeliveryStatus:
     return DeliveryStatus.pending_shipment
 
 
-def detect_payment_method(text: str) -> PaymentMethod | None:
-    low = text.lower()
+def detect_payment_method(message_body: str) -> PaymentMethod | None:
+    low = message_body.lower()
     if "cash" in low:
         return PaymentMethod.cash
     if any(word in low for word in ("bank", "transfer", "transaction", "card")):
@@ -52,17 +52,17 @@ async def migrate(path: Path, catalog_path: Path) -> None:
         json_content = path.read_text(encoding="utf-8")
         export = json.loads(json_content)
         messages = export.get("messages", [])
-        order_texts: list[tuple[dict[str, Any], str]] = []
+        order_messages: list[tuple[dict[str, Any], str]] = []
 
         for message in messages:
-            text_value = text_from_message(message).strip()
-            if text_value and "total" in text_value.lower():
-                order_texts.append((message, text_value))
+            message_body = message_body_from_message(message).strip()
+            if message_body and "total" in message_body.lower():
+                order_messages.append((message, message_body))
 
         created_orders = 0
         skipped_items = 0
-        for message, raw_text in order_texts:
-            parsed = fallback_parse_order_text(raw_text)
+        for message, message_body in order_messages:
+            parsed = fallback_parse_order_text(message_body)
             if not parsed.shop_name or not parsed.items:
                 continue
             existing_shop = await session.scalar(select(Shop).where(Shop.name == parsed.shop_name.strip()))
@@ -79,7 +79,7 @@ async def migrate(path: Path, catalog_path: Path) -> None:
             order_kwargs = {
                 "shop_id": shop.id,
                 "user_id": int(str(message.get("from_id", "0")).replace("user", "") or 0),
-                "delivery_status": detect_delivery_status(raw_text),
+                "delivery_status": detect_delivery_status(message_body),
                 "total_amount": Decimal("0.00"),
             }
             if message.get("date"):
@@ -102,12 +102,12 @@ async def migrate(path: Path, catalog_path: Path) -> None:
                     )
                 )
             order.total_amount = calculated_total.quantize(Decimal("0.01"))
-            method = detect_payment_method(raw_text)
+            method = detect_payment_method(message_body)
             if method and order.total_amount:
                 session.add(OrderPayment(order_id=order.id, payment_method=method, amount=order.total_amount))
                 await session.flush()
                 order.payment_status = PaymentStatus.paid
-            elif "credit" in raw_text.lower() or "paid" not in raw_text.lower():
+            elif "credit" in message_body.lower() or "paid" not in message_body.lower():
                 order.payment_status = PaymentStatus.unpaid
             created_orders += 1
 
