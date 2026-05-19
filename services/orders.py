@@ -400,9 +400,10 @@ async def create_order_from_parsed(session: AsyncSession, parsed: dict, shop: Sh
     order = Order(shop_id=shop.id, user_id=user_id, total_amount=Decimal("0.00"))
     session.add(order)
     await session.flush()
-    # Update shop with phone number if provided in parsed data
-    if parsed.get("phone_number") and not shop.phone_number:
-        shop.phone_number = parsed.get("phone_number")
+    # Update shop phone if Gemini extracted a phone number, including overwriting outdated values
+    phone_number = parsed.get("phone_number")
+    if phone_number and phone_number != shop.phone_number:
+        shop.phone_number = phone_number
     calculated_total = Decimal("0.00")
     for item in parsed.get("items", []):
         quantity = int(item.get("quantity") or 1)
