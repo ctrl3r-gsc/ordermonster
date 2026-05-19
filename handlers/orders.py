@@ -271,7 +271,12 @@ def dashboard_keyboard(orders) -> InlineKeyboardMarkup:
             f"{dashboard_order_state_emoji(order)}"
         )
         rows.append([InlineKeyboardButton(text=text[:64], callback_data=f"ord:{order.id}")])
+    rows.append([InlineKeyboardButton(text="🏪 Магазины", callback_data="shops:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def dashboard_empty_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏪 Магазины", callback_data="shops:list")]])
 
 
 @router.message(Command("start"), F.chat.type.in_(ORDER_CHAT_TYPES))
@@ -283,7 +288,7 @@ async def start(message: Message) -> None:
 async def dashboard_cb(callback: CallbackQuery, session: AsyncSession) -> None:
     orders = await dashboard_orders(session)
     if not orders:
-        await callback.message.edit_text("No dashboard orders for today.")
+        await callback.message.edit_text("No dashboard orders for today.", reply_markup=dashboard_empty_keyboard())
         await callback.answer()
         return
     await callback.message.edit_text(
@@ -292,7 +297,7 @@ async def dashboard_cb(callback: CallbackQuery, session: AsyncSession) -> None:
     await callback.answer()
 
 
-@router.message(StateFilter(None), F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
+@router.message(StateFilter(None), F.text, ~F.text.startswith("/"), F.chat.type.in_(ORDER_CHAT_TYPES))
 async def parse_new_order(message: Message, state: FSMContext, session: AsyncSession) -> None:
     await process_order_text(message, state, session)
 
