@@ -61,6 +61,7 @@ SYSTEM_INSTRUCTION = (
     "   - STRICT EXTRACTION RULE: If the message says 'New order for SHOP. Address: Condo Room 105. Mobile: +66...', "
     "you MUST extract 'Condo Room 105' into `address` and '+66...' into `phone_number`.\n"
     "   - If a phone number (for example, starting with +66, 09, 08, 06) is written inside or next to the address, extract those digits into the 'phone_number' field, AND keep the location text intact inside the 'address' field.\n"
+    "   - The `address` field might just be a URL (for example a Google Maps link). If the user provides a link as the location, extract the exact URL string into the `address` field. Do not leave it empty.\n"
     "   - NEVER leave the address as 'not specified' or null if a physical location is mentioned in the text.\n"
     "4. `items`: Extract every single ordered product into this array.\n"
     "   - `product_name`: Standardize to 'Gummies', 'Brownie', 'Cookie', or 'Drops' (e.g., 'гамми', 'гамме' -> 'Gummies').\n"
@@ -71,7 +72,7 @@ SYSTEM_INSTRUCTION = (
     "   - `dosage`: Extract ONLY the integer number of milligrams (e.g., '500мг' -> 500).\n"
     "     If the user orders 'gummies' (мармелад), 'brownie' (брауни), or 'cookie' (печенье) WITHOUT specifying milligrams, you MUST automatically set `dosage` to 100. Never leave it null or skip the item.\n"
     "   - `flavor`: Extract the flavor string (e.g., 'клубника', 'strawberry'). If not mentioned -> null.\n"
-    "   - `quantity`: Extract the exact integer count.\n"
+    "   - `quantity`: Extract the exact integer count. Quantity can appear before or after the product name. If the user writes '10 pcs gummies 500mg', the item quantity MUST be exactly 10, not the default 1.\n"
     "   - `is_gift`: Set to true ONLY if words like 'бонус', 'подарок', 'на пробу', 'gift' are near the item.\n"
     "5. `suggested_payment_method`: Strictly 'cash', 'transaction', 'crypto', or null.\n"
     "6. `total_amount`: Extract the numeric total price if explicitly provided at the end (e.g., '3000' or '3,000').\n\n"
@@ -348,20 +349,27 @@ def _extract_inline_shop_name(text: str) -> str | None:
 
 
 def _extract_phone_number(text: str) -> str | None:
+    thai_phone_pattern = r"(?:\+66[\s().-]*|0)(?:[689]\d)[\s().-]*\d{3}[\s().-]*\d{4}"
     keyword_match = re.search(
-        r"(?:mobile|phone|tel|contact|телефон|номер)\s*:?\s*(\+?\d[\d\s().-]{6,}\d)",
+        rf"(?:mobile|phone|tel|contact|телефон|номер)\s*:?\s*({thai_phone_pattern})",
         text,
         flags=re.I,
     )
     if keyword_match:
         return re.sub(r"\s+", " ", keyword_match.group(1)).strip(" .,-")
-    phone_match = re.search(r"(?:\+66|0[689])[\d\s().-]{7,}\d", text)
+    phone_match = re.search(thai_phone_pattern, text)
     if phone_match:
         return re.sub(r"\s+", " ", phone_match.group(0)).strip(" .,-")
     return None
 
 
 def _extract_address(text: str) -> str | None:
+    url_match = re.search(r"https?://\S+", text, flags=re.I)
+    if url_match and (
+        any(word in text.lower() for word in ("address", "addr", "location", "map", "maps", "адрес"))
+        or any(word in url_match.group(0).lower() for word in ("maps", "goo.gl", "google"))
+    ):
+        return url_match.group(0).strip(" .,)")
     address_match = re.search(
         r"(?:address|addr|location|адрес)\s*:?\s*(.+?)(?=(?:\bmobile\b|\bphone\b|\btel\b|\bcontact\b|телефон|номер|$))",
         text,
@@ -443,9 +451,19 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
         product_name = PRODUCT_ALIASES.get(alias.lower(), _standardize_product_name(alias))
         segment_start = match.end()
         segment_end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        prefix_start = matches[index - 1].end() if index > 0 else 0
+        prefix_low = text[prefix_start:match.start()].lower()
         segment = text[segment_start:segment_end]
         segment_low = segment.lower()
         segment_consumed_until = 0
+        prefix_quantity = None
+        prefix_quantity_match = re.search(
+            r"(\d+)\s*(?:packs?|pcs?|pieces?|шт|штук|уп|пачек|пачки)\s*$",
+            prefix_low,
+            flags=re.I,
+        )
+        if prefix_quantity_match:
+            prefix_quantity = int(prefix_quantity_match.group(1))
 
         dosage_quantity_matches = list(
             re.finditer(
@@ -461,7 +479,7 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
                         product_name=product_name,
                         dosage=_parse_dosage(dosage_quantity),
                         flavor=next((flavor for flavor in FLAVORS if flavor in segment_low), None),
-                        quantity=int(dosage_quantity.group(3)) if dosage_quantity.group(3) else 1,
+                        quantity=int(dosage_quantity.group(3)) if dosage_quantity.group(3) else prefix_quantity or 1,
                         is_gift=any(word in segment_low for word in GIFT_WORDS),
                     )
                 )
@@ -491,6 +509,7 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
             tail,
             flags=re.I,
         ).strip(" ,.;:-")
+        tail = re.sub(r"^(?:for|to)\s+(?:shop\s+)?", "", tail, flags=re.I).strip(" ,.;:-")
         if tail and not any(alias in tail.lower() for alias in PRODUCT_ALIASES):
             trailing_shop = tail
     return items, trailing_shop

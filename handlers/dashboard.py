@@ -303,7 +303,7 @@ async def dashboard_open_order(callback: CallbackQuery, session: AsyncSession) -
         delivered = order.delivery_status == DeliveryStatus.delivered
         await callback.message.edit_text(
             text=order_card_text(order),
-            reply_markup=order_card_keyboard(order.id, delivered=delivered),
+            reply_markup=order_card_keyboard(order, delivered=delivered),
             parse_mode="HTML",
         )
         await callback.answer()

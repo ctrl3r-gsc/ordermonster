@@ -10,7 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import DeliveryStatus, Order, PaymentStatus, Shop
+from db.models import DeliveryStatus, Order, PaymentStatus
 from services.orders import (
     add_payment,
     all_shops,
@@ -29,7 +29,6 @@ from services.orders import (
     update_item_unit_price,
     remaining_amount,
     sanitize_shop_name,
-    top_shops,
 )
 from services.parser import parse_order_text
 
@@ -69,9 +68,9 @@ def looks_like_order_text(text: str | None) -> bool:
 
 
 class OrderFlow(StatesGroup):
-    choosing_shop = State()
-    entering_shop_name = State()
-    entering_shop_address = State()
+    setting_shop = State()
+    adding_address = State()
+    adding_phone = State()
     entering_split_amount = State()
     choosing_payment_method = State()
     entering_tracking = State()
@@ -174,9 +173,45 @@ def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardM
         if action_row:
             rows.append(action_row)
         rows.append([InlineKeyboardButton(text="✏️ Edit Prices", callback_data=f"pr:{order_id}")])
+    if order:
+        missing_row = []
+        if not order.shop.address:
+            missing_row.append(InlineKeyboardButton(text="📍 Add Address", callback_data=f"add_addr:{order_id}"))
+        if not order.shop.phone_number:
+            missing_row.append(InlineKeyboardButton(text="📱 Add Phone", callback_data=f"add_phone:{order_id}"))
+        if missing_row:
+            rows.append(missing_row)
     rows.append([InlineKeyboardButton(text="Dashboard", callback_data="dash")])
     rows.append([InlineKeyboardButton(text="❌ Delete Order", callback_data=f"delete_order:{order_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def draft_order_card_text(parsed: dict) -> str:
+    lines = [
+        "📦 <b>Draft Order</b>",
+        "🏪 Shop: <b>missing</b>",
+    ]
+    address = (parsed.get("address") or "").strip()
+    phone = (parsed.get("phone_number") or "").strip()
+    if address:
+        lines.append(f"📍 Address: {escape(address)}")
+    if phone:
+        lines.append(f"📱 Mobile: {escape(phone)}")
+    lines.extend(["", "🛍️ <b>Items:</b>"])
+    for item in parsed.get("items", []):
+        product_name = escape(str(item.get("product_name") or "Item").title())
+        dosage = f" {item.get('dosage')}mg" if item.get("dosage") else ""
+        quantity = int(item.get("quantity") or 1)
+        lines.append(f"• {product_name}{dosage} — {quantity} pcs")
+    return "\n".join(lines)
+
+
+def draft_order_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🏪 Set Shop", callback_data="draft:set_shop")],
+        ]
+    )
 
 
 def delete_confirmation_keyboard(order_id: int) -> InlineKeyboardMarkup:
@@ -186,12 +221,6 @@ def delete_confirmation_keyboard(order_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="❌ Cancel", callback_data=f"cancel_del:{order_id}")],
         ]
     )
-
-
-def shops_keyboard(shops) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text=shop.name[:40], callback_data=f"shop:{shop.id}")] for shop in shops]
-    rows.append([InlineKeyboardButton(text="New/Search Shop", callback_data="shop:new")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def payment_keyboard(order_id: int) -> InlineKeyboardMarkup:
@@ -352,73 +381,90 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
             parse_mode="HTML",
         )
         return
-    shops = await top_shops(session)
-    await state.set_state(OrderFlow.choosing_shop)
-    await respond_to_message(message, "Choose a shop for this order:", reply_markup=shops_keyboard(shops))
+    await respond_to_message(
+        message,
+        draft_order_card_text(parsed),
+        reply_markup=draft_order_keyboard(),
+        parse_mode="HTML",
+    )
 
 
-@router.message(OrderFlow.choosing_shop, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
-async def replace_draft_while_choosing_shop(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    await process_order_text(message, state, session)
-
-
-@router.callback_query(F.data.startswith("shop:"))
-async def choose_shop(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    choice = callback.data.split(":", 1)[1]
-    if choice == "new":
-        await state.set_state(OrderFlow.entering_shop_name)
-        await callback.message.edit_text("Type the shop name.")
-        await callback.answer()
+@router.callback_query(F.data == "draft:set_shop")
+async def draft_set_shop(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    if not data.get("parsed"):
+        await callback.answer("Order draft expired. Send the order again.", show_alert=True)
         return
+    await state.set_state(OrderFlow.setting_shop)
+    await callback.message.edit_text("Type the shop name for this order.")
+    await callback.answer()
+
+
+@router.message(OrderFlow.setting_shop, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
+async def set_draft_shop(message: Message, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
     parsed = data.get("parsed")
     if not parsed:
-        await callback.message.edit_text("Order draft expired. Send the raw order again.")
+        await respond_to_message(message, "Order draft expired. Send the order again.")
         await state.clear()
-        await callback.answer()
         return
-    from sqlalchemy import select
-
-    selected = await session.scalar(select(Shop).where(Shop.id == int(choice)))
-    if not selected:
-        await callback.message.edit_text("Shop not found. Send the raw order again.")
-        await state.clear()
-        await callback.answer()
+    shop_name = sanitize_shop_name((message.text or "").upper().strip())
+    if not shop_name:
+        await respond_to_message(message, "Type a valid shop name.")
         return
-    order = await create_order_from_parsed(session, parsed, selected, callback.from_user.id)
+    parsed["shop_name"] = shop_name
+    shop = await get_or_create_shop(session, shop_name, parsed.get("address"), parsed.get("phone_number"))
+    order = await create_order_from_parsed(session, parsed, shop, message.from_user.id)
     await state.clear()
-    await callback.message.edit_text(
+    await respond_to_message(
+        message,
         order_card_text(order),
         reply_markup=order_card_keyboard(order),
         parse_mode="HTML",
     )
+
+
+@router.callback_query(F.data.startswith("add_addr:"))
+async def add_address(callback: CallbackQuery, state: FSMContext) -> None:
+    order_id = int(callback.data.split(":")[1])
+    await state.update_data(order_id=order_id)
+    await state.set_state(OrderFlow.adding_address)
+    await callback.message.edit_text("Type the address for this shop.")
     await callback.answer()
 
 
-@router.message(OrderFlow.entering_shop_name, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
-async def enter_shop_name(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    if looks_like_order_text(message.text):
-        await process_order_text(message, state, session)
-        return
-    await state.update_data(shop_name=sanitize_shop_name(message.text))
-    await state.set_state(OrderFlow.entering_shop_address)
-    await respond_to_message(message, "Type the physical address.")
-
-
-@router.message(OrderFlow.entering_shop_address, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
-async def enter_shop_address(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    if looks_like_order_text(message.text):
-        await process_order_text(message, state, session)
-        return
+@router.message(OrderFlow.adding_address, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
+async def enter_added_address(message: Message, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
-    parsed = data.get("parsed")
-    if not parsed:
-        await respond_to_message(message, "Order draft expired. Send the raw order again.")
-        await state.clear()
-        return
-    parsed.setdefault("address", message.text.strip())
-    shop = await get_or_create_shop(session, data["shop_name"], parsed.get("address"), parsed.get("phone_number"))
-    order = await create_order_from_parsed(session, parsed, shop, message.from_user.id)
+    order = await get_order(session, int(data["order_id"]))
+    order.shop.address = message.text.strip()
+    await session.commit()
+    order = await get_order(session, order.id)
+    await state.clear()
+    await respond_to_message(
+        message,
+        order_card_text(order),
+        reply_markup=order_card_keyboard(order),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("add_phone:"))
+async def add_phone(callback: CallbackQuery, state: FSMContext) -> None:
+    order_id = int(callback.data.split(":")[1])
+    await state.update_data(order_id=order_id)
+    await state.set_state(OrderFlow.adding_phone)
+    await callback.message.edit_text("Type the mobile number for this shop.")
+    await callback.answer()
+
+
+@router.message(OrderFlow.adding_phone, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
+async def enter_added_phone(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    data = await state.get_data()
+    order = await get_order(session, int(data["order_id"]))
+    order.shop.phone_number = message.text.strip()
+    await session.commit()
+    order = await get_order(session, order.id)
     await state.clear()
     await respond_to_message(
         message,
