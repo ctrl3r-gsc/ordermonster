@@ -97,8 +97,8 @@ def product_display_name(product) -> str:
 
 
 def order_card_text(order, parsed_address: str | None = None, parsed_phone: str | None = None) -> str:
-    address = parsed_address or order.shop.address or "not specified"
-    phone = parsed_phone or order.shop.phone_number
+    address = parsed_address if parsed_address else order.shop.address or "not specified"
+    phone = parsed_phone if parsed_phone else order.shop.phone_number
     lines = [
         f"📦 <b>Order # {order.id}</b>",
         f"📅 Date: {format_order_datetime(order.created_at)}",
@@ -140,6 +140,17 @@ def order_card_text(order, parsed_address: str | None = None, parsed_phone: str 
         ]
     )
     return "\n".join(lines)
+
+
+def parsed_contact_values(parsed: dict) -> tuple[str | None, str | None]:
+    address = (parsed.get("address") or "").strip()
+    phone = (parsed.get("phone_number") or "").strip()
+    return address or None, phone or None
+
+
+def new_order_card_text(order, parsed: dict) -> str:
+    address, phone = parsed_contact_values(parsed)
+    return order_card_text(order, parsed_address=address, parsed_phone=phone)
 
 
 def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardMarkup:
@@ -325,7 +336,7 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
             await state.clear()
             await respond_to_message(
                 message,
-                order_card_text(order, parsed.get("address"), parsed.get("phone_number")),
+                new_order_card_text(order, parsed),
                 reply_markup=order_card_keyboard(order),
                 parse_mode="HTML",
             )
@@ -374,7 +385,7 @@ async def choose_shop(callback: CallbackQuery, state: FSMContext, session: Async
     order = await create_order_from_parsed(session, parsed, selected, callback.from_user.id)
     await state.clear()
     await callback.message.edit_text(
-        order_card_text(order, parsed.get("address"), parsed.get("phone_number")),
+        new_order_card_text(order, parsed),
         reply_markup=order_card_keyboard(order),
         parse_mode="HTML",
     )
@@ -407,7 +418,7 @@ async def enter_shop_address(message: Message, state: FSMContext, session: Async
     await state.clear()
     await respond_to_message(
         message,
-        order_card_text(order, parsed.get("address"), parsed.get("phone_number")),
+        new_order_card_text(order, parsed),
         reply_markup=order_card_keyboard(order),
         parse_mode="HTML",
     )
