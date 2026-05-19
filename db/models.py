@@ -34,6 +34,7 @@ class Shop(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     address: Mapped[str | None] = mapped_column(Text)
+    phone_number: Mapped[str | None] = mapped_column(String(30))
     price_modifier: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

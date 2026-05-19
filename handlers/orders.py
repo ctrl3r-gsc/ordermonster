@@ -99,12 +99,13 @@ def product_display_name(product) -> str:
 def order_card_text(order) -> str:
     lines = [
         f"📦 <b>Order # {order.id}</b>",
-        f"📅 Дата: {format_order_datetime(order.created_at)}",
+        f"📅 Date: {format_order_datetime(order.created_at)}",
         f"🏪 Shop: <b>{escape(order.shop.name)}</b>",
         f"📍 Address: {escape(order.shop.address) if order.shop.address else 'not specified'}",
-        "",
-        "🛍 <b>Items:</b>",
     ]
+    if order.shop.phone_number:
+        lines.append(f"📱 Mobile: {escape(order.shop.phone_number)}")
+    lines.extend(["", "🛍️ <b>Items:</b>"])
     for item in order.items:
         product = item.product
         if item.is_gift:
@@ -154,17 +155,17 @@ def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardM
             action_row.append(InlineKeyboardButton(text="Edit Delivery", callback_data=f"del:{order_id}"))
         if action_row:
             rows.append(action_row)
-        rows.append([InlineKeyboardButton(text="✏️ Изменить цену / Edit Prices", callback_data=f"pr:{order_id}")])
+        rows.append([InlineKeyboardButton(text="✏️ Edit Prices", callback_data=f"pr:{order_id}")])
     rows.append([InlineKeyboardButton(text="Dashboard", callback_data="dash")])
-    rows.append([InlineKeyboardButton(text="❌ Удалить заказ / Delete Order", callback_data=f"delete_order:{order_id}")])
+    rows.append([InlineKeyboardButton(text="❌ Delete Order", callback_data=f"delete_order:{order_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def delete_confirmation_keyboard(order_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"confirm_del:{order_id}")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data=f"cancel_del:{order_id}")],
+            [InlineKeyboardButton(text="✅ Yes, Delete", callback_data=f"confirm_del:{order_id}")],
+            [InlineKeyboardButton(text="❌ Cancel", callback_data=f"cancel_del:{order_id}")],
         ]
     )
 
@@ -271,12 +272,12 @@ def dashboard_keyboard(orders) -> InlineKeyboardMarkup:
             f"{dashboard_order_state_emoji(order)}"
         )
         rows.append([InlineKeyboardButton(text=text[:64], callback_data=f"ord:{order.id}")])
-    rows.append([InlineKeyboardButton(text="🏪 Магазины", callback_data="shops:list")])
+    rows.append([InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def dashboard_empty_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏪 Магазины", callback_data="shops:list")]])
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")]])
 
 
 @router.message(Command("start"), F.chat.type.in_(ORDER_CHAT_TYPES))

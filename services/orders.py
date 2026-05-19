@@ -138,7 +138,7 @@ def sanitize_shop_name(name: str | None) -> str:
     return clean_name.strip(" :-–—.,'’").upper()
 
 
-async def get_or_create_shop(session: AsyncSession, name: str, address: str | None = None) -> Shop:
+async def get_or_create_shop(session: AsyncSession, name: str, address: str | None = None, phone_number: str | None = None) -> Shop:
     clean_name = sanitize_shop_name(name)
     if not clean_name:
         raise ValueError("Shop name cannot be empty")
@@ -146,8 +146,10 @@ async def get_or_create_shop(session: AsyncSession, name: str, address: str | No
     if shop:
         if address and not shop.address:
             shop.address = address
+        if phone_number and not shop.phone_number:
+            shop.phone_number = phone_number
         return shop
-    shop = Shop(name=clean_name, address=address, price_modifier=Decimal("0.00"))
+    shop = Shop(name=clean_name, address=address, phone_number=phone_number, price_modifier=Decimal("0.00"))
     session.add(shop)
     await session.flush()
     return shop
@@ -398,6 +400,9 @@ async def create_order_from_parsed(session: AsyncSession, parsed: dict, shop: Sh
     order = Order(shop_id=shop.id, user_id=user_id, total_amount=Decimal("0.00"))
     session.add(order)
     await session.flush()
+    # Update shop with phone number if provided in parsed data
+    if parsed.get("phone_number") and not shop.phone_number:
+        shop.phone_number = parsed.get("phone_number")
     calculated_total = Decimal("0.00")
     for item in parsed.get("items", []):
         quantity = int(item.get("quantity") or 1)

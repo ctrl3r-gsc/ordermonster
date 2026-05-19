@@ -34,6 +34,7 @@ class OrderItem(BaseModel):
 class ExtractedOrder(BaseModel):
     shop_name: str | None = None
     items: list[OrderItem] = Field(default_factory=list)
+    phone_number: str | None = None
     suggested_payment_method: Literal["cash", "transaction", "crypto"] | None = None
     total_amount: float | None = None
 
@@ -49,7 +50,12 @@ SYSTEM_INSTRUCTION = (
     "1. `shop_name`: Extract ONLY the specific name of the shop/client (e.g., 'шаман', 'SHAMAN', 'TAI MA TON'). "
     "NEVER copy the whole text here! If no shop name is mentioned in the text, set it to null.\n"
     "   `shop_name` MUST contain only the clean raw establishment brand in UPPERCASE. Never include labels, prefixes, punctuation, emojis, or order phrases such as 'Shop:', 'Store:', 'New Order', 'Order for', 'Order:', 'Заказ для', or 'Обновлённый заказ для'.\n"
-    "2. `items`: Extract every single ordered product into this array.\n"
+    "2. `phone_number`: Extract the mobile/phone number ONLY from explicit contact information.\n"
+    "   - Look for standard Thai formats: '+66...', '09...', '08...', '06...' or other 10-digit numbers.\n"
+    "   - Look for keywords near numbers: 'Mobile:', 'Tel:', 'Phone:', 'contact', 'mobile', 'телефон', 'номер'.\n"
+    "   - CRITICAL: Phone number MUST NEVER appear in the 'address' field. Address should only contain the physical delivery location.\n"
+    "   - If no phone number is found, set to null or empty string.\n"
+    "3. `items`: Extract every single ordered product into this array.\n"
     "   - `product_name`: Standardize to 'Gummies', 'Brownie', 'Cookie', or 'Drops' (e.g., 'гамми', 'гамме' -> 'Gummies').\n"
     "     Users will make typos when writing product names (e.g., 'guumies' instead of 'gummies'). "
     "You must logically map these typos to the correct canonical categories: 'gummies', 'brownie', "
@@ -60,8 +66,8 @@ SYSTEM_INSTRUCTION = (
     "   - `flavor`: Extract the flavor string (e.g., 'клубника', 'strawberry'). If not mentioned -> null.\n"
     "   - `quantity`: Extract the exact integer count.\n"
     "   - `is_gift`: Set to true ONLY if words like 'бонус', 'подарок', 'на пробу', 'gift' are near the item.\n"
-    "3. `suggested_payment_method`: Strictly 'cash', 'transaction', 'crypto', or null.\n"
-    "4. `total_amount`: Extract the numeric total price if explicitly provided at the end (e.g., '3000' or '3,000').\n\n"
+    "4. `suggested_payment_method`: Strictly 'cash', 'transaction', 'crypto', or null.\n"
+    "5. `total_amount`: Extract the numeric total price if explicitly provided at the end (e.g., '3000' or '3,000').\n\n"
     "EXAMPLES OF CORRECT PARSING:\n\n"
     "Input: 'бро привет, запиши нам 10 пачек гамми 500мг клубника в шаман, оплата налик'\n"
     "Output:\n"
