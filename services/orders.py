@@ -92,7 +92,7 @@ def format_order_datetime(value: datetime | None) -> str:
     local_value = bangkok_datetime(value)
     if local_value is None:
         return "unknown"
-    return local_value.strftime("%d.%m.%Y | %H:%M")
+    return local_value.strftime("%d.%m (%H:%M)")
 
 
 def format_dashboard_datetime(value: datetime | None) -> str:
@@ -138,15 +138,25 @@ def sanitize_shop_name(name: str | None) -> str:
     return clean_name.strip(" :-–—.,'’").upper()
 
 
+def clean_contact_value(value: str | None) -> str | None:
+    clean = (value or "").strip()
+    if not clean or clean.lower() in {"not specified", "unknown", "none", "null"}:
+        return None
+    return clean
+
+
 async def get_or_create_shop(session: AsyncSession, name: str, address: str | None = None, phone_number: str | None = None) -> Shop:
-    clean_name = sanitize_shop_name(name)
+    clean_name = (name or "").upper().strip()
+    clean_name = sanitize_shop_name(clean_name)
     if not clean_name:
         raise ValueError("Shop name cannot be empty")
+    address = clean_contact_value(address)
+    phone_number = clean_contact_value(phone_number)
     shop = await session.scalar(select(Shop).where(func.lower(Shop.name) == clean_name.lower()))
     if shop:
-        if address and not shop.address:
+        if address and address != shop.address:
             shop.address = address
-        if phone_number and not shop.phone_number:
+        if phone_number and phone_number != shop.phone_number:
             shop.phone_number = phone_number
         return shop
     shop = Shop(name=clean_name, address=address, phone_number=phone_number, price_modifier=Decimal("0.00"))
@@ -396,17 +406,30 @@ async def find_product_for_item(
     return None
 
 
+def parsed_shop_contact(parsed: dict) -> tuple[str | None, str | None]:
+    return clean_contact_value(parsed.get("address")), clean_contact_value(parsed.get("phone_number"))
+
+
+async def shop_from_parsed(session: AsyncSession, parsed: dict, fallback_shop: Shop | None = None) -> Shop:
+    shop_name = (parsed.get("shop_name") or "").upper().strip()
+    address, phone_number = parsed_shop_contact(parsed)
+    if shop_name:
+        return await get_or_create_shop(session, shop_name, address=address, phone_number=phone_number)
+    if fallback_shop is None:
+        raise ValueError("Shop name cannot be empty")
+    if address and address != fallback_shop.address:
+        fallback_shop.address = address
+    if phone_number and phone_number != fallback_shop.phone_number:
+        fallback_shop.phone_number = phone_number
+    await session.flush()
+    return fallback_shop
+
+
 async def create_order_from_parsed(session: AsyncSession, parsed: dict, shop: Shop, user_id: int) -> Order:
+    shop = await shop_from_parsed(session, parsed, fallback_shop=shop)
     order = Order(shop_id=shop.id, user_id=user_id, total_amount=Decimal("0.00"))
     session.add(order)
     await session.flush()
-    # Update shop phone and address from parsed order data
-    address = (parsed.get("address") or "").strip()
-    if address and address != shop.address:
-        shop.address = address
-    phone_number = (parsed.get("phone_number") or "").strip()
-    if phone_number and phone_number != shop.phone_number:
-        shop.phone_number = phone_number
     calculated_total = Decimal("0.00")
     for item in parsed.get("items", []):
         quantity = int(item.get("quantity") or 1)
@@ -436,6 +459,7 @@ async def create_order_from_parsed(session: AsyncSession, parsed: dict, shop: Sh
         )
     order.total_amount = calculated_total.quantize(Decimal("0.01"))
     await session.flush()
+    await session.commit()
     return await get_order(session, order.id)
 
 

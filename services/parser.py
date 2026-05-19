@@ -48,6 +48,8 @@ SYSTEM_INSTRUCTION = (
     "You are a precise CRM assistant for a confectionery and bar business order tracking system. "
     "Your job is to parse messy, unstructured text messages into a strict JSON schema.\n\n"
     "CRITICAL RULES:\n"
+    "Return clean JSON with these top-level fields: `shop_name`, `address`, `phone_number`, `items`, "
+    "`suggested_payment_method`, and `total_amount`.\n"
     "1. `shop_name`: Extract ONLY the specific name of the shop/client (e.g., 'шаман', 'SHAMAN', 'TAI MA TON'). "
     "NEVER copy the whole text here! If no shop name is mentioned in the text, set it to null.\n"
     "   `shop_name` MUST contain only the clean raw establishment brand in UPPERCASE. Never include labels, prefixes, punctuation, emojis, or order phrases such as 'Shop:', 'Store:', 'New Order', 'Order for', 'Order:', 'Заказ для', or 'Обновлённый заказ для'.\n"
@@ -56,6 +58,8 @@ SYSTEM_INSTRUCTION = (
     "   - Look for keywords near numbers: 'Mobile:', 'Tel:', 'Phone:', 'contact', 'mobile', 'телефон', 'номер'.\n"
     "   - If no phone number is found, set to null or empty string.\n"
     "3. `address` (if provided in text): Extract the full delivery address text into the 'address' field, including condo/apartment name, room number, street, district, or any specific location markers.\n"
+    "   - STRICT EXTRACTION RULE: If the message says 'New order for SHOP. Address: Condo Room 105. Mobile: +66...', "
+    "you MUST extract 'Condo Room 105' into `address` and '+66...' into `phone_number`.\n"
     "   - If a phone number (for example, starting with +66, 09, 08, 06) is written inside or next to the address, extract those digits into the 'phone_number' field, AND keep the location text intact inside the 'address' field.\n"
     "   - NEVER leave the address as 'not specified' or null if a physical location is mentioned in the text.\n"
     "4. `items`: Extract every single ordered product into this array.\n"
@@ -343,6 +347,32 @@ def _extract_inline_shop_name(text: str) -> str | None:
     return None
 
 
+def _extract_phone_number(text: str) -> str | None:
+    keyword_match = re.search(
+        r"(?:mobile|phone|tel|contact|телефон|номер)\s*:?\s*(\+?\d[\d\s().-]{6,}\d)",
+        text,
+        flags=re.I,
+    )
+    if keyword_match:
+        return re.sub(r"\s+", " ", keyword_match.group(1)).strip(" .,-")
+    phone_match = re.search(r"(?:\+66|0[689])[\d\s().-]{7,}\d", text)
+    if phone_match:
+        return re.sub(r"\s+", " ", phone_match.group(0)).strip(" .,-")
+    return None
+
+
+def _extract_address(text: str) -> str | None:
+    address_match = re.search(
+        r"(?:address|addr|location|адрес)\s*:?\s*(.+?)(?=(?:\bmobile\b|\bphone\b|\btel\b|\bcontact\b|телефон|номер|$))",
+        text,
+        flags=re.I | re.S,
+    )
+    if not address_match:
+        return None
+    address = " ".join(address_match.group(1).split()).strip(" .,-")
+    return address or None
+
+
 def _line_looks_like_shop(line: str) -> bool:
     low = line.lower()
     has_order_signal = bool(re.search(r"\d|\b(mg|мг|g|гр|г|x|pcs?|шт|пач)", low))
@@ -519,6 +549,8 @@ def fallback_parse_order_text(text: str, existing_shops: list[str] | None = None
 
     return ExtractedOrder(
         shop_name=sanitize_shop_name(resolved_shop_name),
+        address=_extract_address(text),
+        phone_number=_extract_phone_number(text),
         items=items,
         suggested_payment_method=payment,
         total_amount=total_amount,
@@ -531,6 +563,13 @@ def _is_bad_shop_name(shop_name: str | None, raw_text: str) -> bool:
     compact_shop = " ".join(shop_name.split())
     compact_raw = " ".join(raw_text.split())
     return "\n" in shop_name or len(compact_shop) > 80 or compact_shop == compact_raw
+
+
+def _clean_optional_text(value: str | None) -> str | None:
+    clean = (value or "").strip()
+    if not clean or clean.lower() in {"not specified", "unknown", "none", "null"}:
+        return None
+    return clean
 
 
 def _merge_with_fallback(
@@ -552,6 +591,8 @@ def _merge_with_fallback(
         extracted.items = fallback.items
     if extracted.shop_name is None and fallback.shop_name and not _is_bad_shop_name(fallback.shop_name, raw_text):
         extracted.shop_name = sanitize_shop_name(fallback.shop_name)
+    extracted.address = _clean_optional_text(extracted.address) or _clean_optional_text(fallback.address)
+    extracted.phone_number = _clean_optional_text(extracted.phone_number) or _clean_optional_text(fallback.phone_number)
     if extracted.suggested_payment_method is None:
         extracted.suggested_payment_method = fallback.suggested_payment_method
     if extracted.total_amount is None:

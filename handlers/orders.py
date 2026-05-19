@@ -47,7 +47,23 @@ def looks_like_order_text(text: str | None) -> bool:
     if not text:
         return False
     low = text.lower()
-    has_product = any(word in low for word in ("gummy", "gummies", "гамми", "гамме", "brownie", "брауни", "cookie", "cookies"))
+    has_product = any(
+        word in low
+        for word in (
+            "gummy",
+            "gummies",
+            "guumies",
+            "gumies",
+            "gummys",
+            "гамми",
+            "гамме",
+            "brownie",
+            "broni",
+            "брауни",
+            "cookie",
+            "cookies",
+        )
+    )
     has_amount = bool(re.search(r"\d+\s*(?:mg|мг|g|гр|г|pcs?|шт|пач|x)", low))
     return has_product and has_amount
 
@@ -97,7 +113,7 @@ def product_display_name(product) -> str:
 
 
 def order_card_text(order, parsed_address: str | None = None, parsed_phone: str | None = None) -> str:
-    address = parsed_address if parsed_address else order.shop.address or "not specified"
+    address = parsed_address if parsed_address else order.shop.address or ""
     phone = parsed_phone if parsed_phone else order.shop.phone_number
     lines = [
         f"📦 <b>Order # {order.id}</b>",
@@ -140,17 +156,6 @@ def order_card_text(order, parsed_address: str | None = None, parsed_phone: str 
         ]
     )
     return "\n".join(lines)
-
-
-def parsed_contact_values(parsed: dict) -> tuple[str | None, str | None]:
-    address = (parsed.get("address") or "").strip()
-    phone = (parsed.get("phone_number") or "").strip()
-    return address or None, phone or None
-
-
-def new_order_card_text(order, parsed: dict) -> str:
-    address, phone = parsed_contact_values(parsed)
-    return order_card_text(order, parsed_address=address, parsed_phone=phone)
 
 
 def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardMarkup:
@@ -325,27 +330,25 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
         await respond_to_message(message, "I could not find order items in that message.")
         return
     await state.set_data({"parsed": parsed})
-    shop_name = sanitize_shop_name(parsed.get("shop_name"))
+    shop_name = (parsed.get("shop_name") or "").upper().strip()
+    shop_name = sanitize_shop_name(shop_name)
     if shop_name:
         parsed["shop_name"] = shop_name
-    if shop_name:
         matched_shop = match_existing_shop_name(shop_name, shops)
+        shop = matched_shop or await get_or_create_shop(
+            session,
+            shop_name,
+            parsed.get("address"),
+            parsed.get("phone_number"),
+        )
         if matched_shop:
             parsed["shop_name"] = matched_shop.name
-            order = await create_order_from_parsed(session, parsed, matched_shop, message.from_user.id)
-            await state.clear()
-            await respond_to_message(
-                message,
-                new_order_card_text(order, parsed),
-                reply_markup=order_card_keyboard(order),
-                parse_mode="HTML",
-            )
-            return
-        await state.update_data(shop_name=shop_name)
-        await state.set_state(OrderFlow.entering_shop_address)
+        order = await create_order_from_parsed(session, parsed, shop, message.from_user.id)
+        await state.clear()
         await respond_to_message(
             message,
-            f"Shop '{escape(shop_name)}' not found. Create it?\nType the physical address to create this shop.",
+            order_card_text(order),
+            reply_markup=order_card_keyboard(order),
             parse_mode="HTML",
         )
         return
@@ -385,7 +388,7 @@ async def choose_shop(callback: CallbackQuery, state: FSMContext, session: Async
     order = await create_order_from_parsed(session, parsed, selected, callback.from_user.id)
     await state.clear()
     await callback.message.edit_text(
-        new_order_card_text(order, parsed),
+        order_card_text(order),
         reply_markup=order_card_keyboard(order),
         parse_mode="HTML",
     )
@@ -413,12 +416,13 @@ async def enter_shop_address(message: Message, state: FSMContext, session: Async
         await respond_to_message(message, "Order draft expired. Send the raw order again.")
         await state.clear()
         return
-    shop = await get_or_create_shop(session, data["shop_name"], message.text.strip())
+    parsed.setdefault("address", message.text.strip())
+    shop = await get_or_create_shop(session, data["shop_name"], parsed.get("address"), parsed.get("phone_number"))
     order = await create_order_from_parsed(session, parsed, shop, message.from_user.id)
     await state.clear()
     await respond_to_message(
         message,
-        new_order_card_text(order, parsed),
+        order_card_text(order),
         reply_markup=order_card_keyboard(order),
         parse_mode="HTML",
     )
@@ -517,7 +521,7 @@ async def delete_order(callback: CallbackQuery, session: AsyncSession) -> None:
         return
 
     await callback.message.edit_text(
-        f"{order_card_text(order)}\n\nУдалить заказ #{order_id}?",
+        f"{order_card_text(order)}\n\nDelete order #{order_id}?",
         reply_markup=delete_confirmation_keyboard(order_id),
         parse_mode="HTML",
     )
@@ -554,7 +558,7 @@ async def confirm_delete(callback: CallbackQuery, session: AsyncSession) -> None
                 parse_mode="HTML",
             )
 
-    await callback.answer(f"Заказ #{order_id} удален")
+    await callback.answer(f"Order #{order_id} deleted")
 
 
 @router.callback_query(F.data.startswith("cancel_del:"))
