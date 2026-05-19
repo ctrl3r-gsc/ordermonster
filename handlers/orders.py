@@ -96,15 +96,17 @@ def product_display_name(product) -> str:
     return escape(" ".join(str(product.name).split()).title())
 
 
-def order_card_text(order) -> str:
+def order_card_text(order, parsed_address: str | None = None, parsed_phone: str | None = None) -> str:
+    address = parsed_address or order.shop.address or "not specified"
+    phone = parsed_phone or order.shop.phone_number
     lines = [
         f"📦 <b>Order # {order.id}</b>",
         f"📅 Date: {format_order_datetime(order.created_at)}",
         f"🏪 Shop: <b>{escape(order.shop.name)}</b>",
-        f"📍 Address: {escape(order.shop.address) if order.shop.address else 'not specified'}",
+        f"📍 Address: {escape(address)}",
     ]
-    if order.shop.phone_number:
-        lines.append(f"📱 Mobile: {escape(order.shop.phone_number)}")
+    if phone:
+        lines.append(f"📱 Mobile: {escape(phone)}")
     lines.extend(["", "🛍️ <b>Items:</b>"])
     for item in order.items:
         product = item.product
@@ -321,7 +323,12 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
             parsed["shop_name"] = matched_shop.name
             order = await create_order_from_parsed(session, parsed, matched_shop, message.from_user.id)
             await state.clear()
-            await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
+            await respond_to_message(
+                message,
+                order_card_text(order, parsed.get("address"), parsed.get("phone_number")),
+                reply_markup=order_card_keyboard(order),
+                parse_mode="HTML",
+            )
             return
         await state.update_data(shop_name=shop_name)
         await state.set_state(OrderFlow.entering_shop_address)
@@ -366,7 +373,11 @@ async def choose_shop(callback: CallbackQuery, state: FSMContext, session: Async
         return
     order = await create_order_from_parsed(session, parsed, selected, callback.from_user.id)
     await state.clear()
-    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
+    await callback.message.edit_text(
+        order_card_text(order, parsed.get("address"), parsed.get("phone_number")),
+        reply_markup=order_card_keyboard(order),
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
@@ -394,7 +405,12 @@ async def enter_shop_address(message: Message, state: FSMContext, session: Async
     shop = await get_or_create_shop(session, data["shop_name"], message.text.strip())
     order = await create_order_from_parsed(session, parsed, shop, message.from_user.id)
     await state.clear()
-    await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
+    await respond_to_message(
+        message,
+        order_card_text(order, parsed.get("address"), parsed.get("phone_number")),
+        reply_markup=order_card_keyboard(order),
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data.startswith("ord:"))

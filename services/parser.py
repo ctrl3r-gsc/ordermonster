@@ -33,8 +33,9 @@ class OrderItem(BaseModel):
 
 class ExtractedOrder(BaseModel):
     shop_name: str | None = None
-    items: list[OrderItem] = Field(default_factory=list)
+    address: str | None = None
     phone_number: str | None = None
+    items: list[OrderItem] = Field(default_factory=list)
     suggested_payment_method: Literal["cash", "transaction", "crypto"] | None = None
     total_amount: float | None = None
 
