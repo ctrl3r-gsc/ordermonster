@@ -5,7 +5,7 @@ from decimal import Decimal
 from difflib import SequenceMatcher
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -37,35 +37,6 @@ EMOJI_RE = re.compile(
     "]+"
 )
 SHOP_SPECIAL_CHARS_RE = re.compile(r"[^\w\s&.'’]", flags=re.UNICODE)
-PRODUCT_CATEGORY_ALIASES = {
-    "gummies": "gummies",
-    "gummy": "gummies",
-    "guumies": "gummies",
-    "gumies": "gummies",
-    "gummys": "gummies",
-    "gummie": "gummies",
-    "gumi": "gummies",
-    "гамми": "gummies",
-    "гамме": "gummies",
-    "g独立": "gummies",
-    "brownie": "brownie",
-    "brownies": "brownie",
-    "broni": "brownie",
-    "browni": "brownie",
-    "брауни": "brownie",
-    "cookies": "cookies",
-    "cookie": "cookies",
-    "cooki": "cookies",
-    "cokie": "cookies",
-    "печенье": "cookies",
-    "cbd drops": "drops",
-    "cbd drop": "drops",
-    "drops": "drops",
-    "drop": "drops",
-    "капли": "drops",
-}
-
-
 def make_sku(name: str, dosage: int | None, flavor: str | None) -> str:
     raw = "-".join(str(part) for part in (name, dosage or "na", flavor or "plain"))
     sku = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
@@ -282,128 +253,19 @@ async def get_or_create_product(
     return product
 
 
-def product_category_from_name(name: str | None) -> str | None:
-    clean_name = (name or "").strip().lower()
-    if not clean_name:
-        return None
-    for alias, category in PRODUCT_CATEGORY_ALIASES.items():
-        if alias in clean_name:
-            return category
-
-    tokens = re.findall(r"[a-zа-яё独立]+", clean_name, flags=re.I)
-    for token in tokens:
-        best_alias = max(PRODUCT_CATEGORY_ALIASES, key=lambda alias: SequenceMatcher(None, token, alias).ratio())
-        if SequenceMatcher(None, token, best_alias).ratio() >= 0.78:
-            return PRODUCT_CATEGORY_ALIASES[best_alias]
-    return None
-
-
-def product_category_from_catalog_name(product_name: str | None) -> str | None:
-    clean_name = (product_name or "").lower()
-    if "gummies" in clean_name or "gummy" in clean_name:
-        return "gummies"
-    if "brownie" in clean_name:
-        return "brownie"
-    if "cookie" in clean_name:
-        return "cookies"
-    if "drop" in clean_name:
-        return "drops"
-    return None
-
-
-def product_match_score(product: Product, category: str, clean_flavor: str | None) -> tuple[int, Decimal]:
-    product_name = product.name.lower()
-    score = 0
-    if product_category_from_catalog_name(product_name) == category:
-        score += 100
-    if category == "gummies" and product_name.startswith("ultimate gummies"):
-        score += 20
-    if category == "gummies" and product_name.startswith("x-hash gummies"):
-        score += 10
-    if clean_flavor and clean_flavor in product_name:
-        score += 40
-    return score, decimal_money(product.price)
-
-
 async def find_product_for_item(
     session: AsyncSession,
     name: str,
     dosage: int | None,
     flavor: str | None,
 ) -> Product | None:
-    clean_name = (name or "").strip().lower()
-    clean_flavor = flavor.strip().lower() if flavor else None
-    category = product_category_from_name(clean_name)
-    sku = make_sku(clean_name, dosage, flavor)
-
-    product = await session.scalar(select(Product).where(Product.sku == sku, Product.is_active.is_(True)))
-    if product:
-        return product
-
-    stmt = select(Product).where(Product.is_active.is_(True))
+    clean_name = (name or "").strip()
+    if not clean_name:
+        return None
+    stmt = select(Product).where(Product.name.ilike(clean_name), Product.is_active.is_(True))
     if dosage is not None:
         stmt = stmt.where(Product.dosage == dosage)
-    if clean_flavor:
-        stmt = stmt.where(
-            or_(
-                func.lower(Product.flavor) == clean_flavor,
-                func.lower(Product.name).ilike(f"%{clean_flavor}%"),
-            )
-        )
-    exact = await session.scalar(stmt.where(func.lower(Product.name) == clean_name).limit(1))
-    if exact:
-        return exact
-
-    name_words = [word for word in re.split(r"[^a-zа-я0-9]+", clean_name) if len(word) >= 4]
-    fuzzy_terms = [clean_name, *name_words]
-    fuzzy_filters = [func.lower(Product.name).ilike(f"%{term}%") for term in fuzzy_terms if term]
-    if fuzzy_filters:
-        fuzzy_stmt = select(Product).where(Product.is_active.is_(True), or_(*fuzzy_filters))
-        if dosage is not None:
-            fuzzy_stmt = fuzzy_stmt.where(Product.dosage == dosage)
-        if clean_flavor:
-            fuzzy_stmt = fuzzy_stmt.where(
-                or_(
-                    Product.flavor.is_(None),
-                    func.lower(Product.flavor) == clean_flavor,
-                    func.lower(Product.name).ilike(f"%{clean_flavor}%"),
-                )
-            )
-        products = list((await session.scalars(fuzzy_stmt)).all())
-        if products:
-            def match_score(candidate: Product) -> tuple[int, Decimal]:
-                candidate_name = candidate.name.lower()
-                score = 0
-                if clean_name == candidate_name:
-                    score += 100
-                for term in fuzzy_terms:
-                    if term and term in candidate_name:
-                        score += 10
-                if clean_flavor and clean_flavor in candidate_name:
-                    score += 40
-                if category == "gummies" and candidate_name.startswith("ultimate gummies"):
-                    score += 5
-                return score, decimal_money(candidate.price)
-
-            return max(products, key=match_score)
-
-    if category and dosage is not None:
-        category_products = list(
-            (
-                await session.scalars(
-                    select(Product).where(Product.is_active.is_(True), Product.dosage == dosage)
-                )
-            ).all()
-        )
-        products = [
-            product
-            for product in category_products
-            if product_category_from_catalog_name(product.name) == category
-        ]
-        if products:
-            return max(products, key=lambda product: product_match_score(product, category, clean_flavor))
-
-    return None
+    return await session.scalar(stmt.limit(1))
 
 
 def parsed_shop_contact(parsed: dict) -> tuple[str | None, str | None]:
@@ -434,18 +296,22 @@ async def create_order_from_parsed(session: AsyncSession, parsed: dict, shop: Sh
     for item in parsed.get("items", []):
         quantity = int(item.get("quantity") or 1)
         is_gift = bool(item.get("is_gift"))
+        parsed_product_name = item.get("product_name") or "unknown"
         product = await find_product_for_item(
-            session, item.get("product_name") or "unknown", item.get("dosage"), item.get("flavor")
+            session, parsed_product_name, item.get("dosage"), item.get("flavor")
         )
+        product_missing = product is None
         if product is None:
             product = await get_or_create_product(
                 session,
-                item.get("product_name") or "unknown",
+                f"UNKNOWN: {parsed_product_name}",
                 item.get("dosage"),
                 item.get("flavor"),
+                price=Decimal("0.00"),
+                is_active=False,
                 force_update=False,
             )
-        unit_price = calculated_unit_price(product, shop, is_gift)
+        unit_price = Decimal("0.00") if product_missing else calculated_unit_price(product, shop, is_gift)
         if not is_gift:
             calculated_total += Decimal(quantity) * unit_price
         session.add(
