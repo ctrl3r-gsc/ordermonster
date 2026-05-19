@@ -37,6 +37,33 @@ EMOJI_RE = re.compile(
     "]+"
 )
 SHOP_SPECIAL_CHARS_RE = re.compile(r"[^\w\s&.'’]", flags=re.UNICODE)
+PRODUCT_CATEGORY_ALIASES = {
+    "gummies": "gummies",
+    "gummy": "gummies",
+    "guumies": "gummies",
+    "gumies": "gummies",
+    "gummys": "gummies",
+    "gummie": "gummies",
+    "gumi": "gummies",
+    "гамми": "gummies",
+    "гамме": "gummies",
+    "g独立": "gummies",
+    "brownie": "brownie",
+    "brownies": "brownie",
+    "broni": "brownie",
+    "browni": "brownie",
+    "брауни": "brownie",
+    "cookies": "cookies",
+    "cookie": "cookies",
+    "cooki": "cookies",
+    "cokie": "cookies",
+    "печенье": "cookies",
+    "cbd drops": "drops",
+    "cbd drop": "drops",
+    "drops": "drops",
+    "drop": "drops",
+    "капли": "drops",
+}
 
 
 def make_sku(name: str, dosage: int | None, flavor: str | None) -> str:
@@ -243,6 +270,49 @@ async def get_or_create_product(
     return product
 
 
+def product_category_from_name(name: str | None) -> str | None:
+    clean_name = (name or "").strip().lower()
+    if not clean_name:
+        return None
+    for alias, category in PRODUCT_CATEGORY_ALIASES.items():
+        if alias in clean_name:
+            return category
+
+    tokens = re.findall(r"[a-zа-яё独立]+", clean_name, flags=re.I)
+    for token in tokens:
+        best_alias = max(PRODUCT_CATEGORY_ALIASES, key=lambda alias: SequenceMatcher(None, token, alias).ratio())
+        if SequenceMatcher(None, token, best_alias).ratio() >= 0.78:
+            return PRODUCT_CATEGORY_ALIASES[best_alias]
+    return None
+
+
+def product_category_from_catalog_name(product_name: str | None) -> str | None:
+    clean_name = (product_name or "").lower()
+    if "gummies" in clean_name or "gummy" in clean_name:
+        return "gummies"
+    if "brownie" in clean_name:
+        return "brownie"
+    if "cookie" in clean_name:
+        return "cookies"
+    if "drop" in clean_name:
+        return "drops"
+    return None
+
+
+def product_match_score(product: Product, category: str, clean_flavor: str | None) -> tuple[int, Decimal]:
+    product_name = product.name.lower()
+    score = 0
+    if product_category_from_catalog_name(product_name) == category:
+        score += 100
+    if category == "gummies" and product_name.startswith("ultimate gummies"):
+        score += 20
+    if category == "gummies" and product_name.startswith("x-hash gummies"):
+        score += 10
+    if clean_flavor and clean_flavor in product_name:
+        score += 40
+    return score, decimal_money(product.price)
+
+
 async def find_product_for_item(
     session: AsyncSession,
     name: str,
@@ -251,6 +321,7 @@ async def find_product_for_item(
 ) -> Product | None:
     clean_name = (name or "").strip().lower()
     clean_flavor = flavor.strip().lower() if flavor else None
+    category = product_category_from_name(clean_name)
     sku = make_sku(clean_name, dosage, flavor)
 
     product = await session.scalar(select(Product).where(Product.sku == sku, Product.is_active.is_(True)))
@@ -298,11 +369,27 @@ async def find_product_for_item(
                         score += 10
                 if clean_flavor and clean_flavor in candidate_name:
                     score += 40
-                if clean_name in {"gummy", "gummies"} and candidate_name.startswith("ultimate gummies"):
+                if category == "gummies" and candidate_name.startswith("ultimate gummies"):
                     score += 5
                 return score, decimal_money(candidate.price)
 
             return max(products, key=match_score)
+
+    if category and dosage is not None:
+        category_products = list(
+            (
+                await session.scalars(
+                    select(Product).where(Product.is_active.is_(True), Product.dosage == dosage)
+                )
+            ).all()
+        )
+        products = [
+            product
+            for product in category_products
+            if product_category_from_catalog_name(product.name) == category
+        ]
+        if products:
+            return max(products, key=lambda product: product_match_score(product, category, clean_flavor))
 
     return None
 

@@ -51,6 +51,10 @@ SYSTEM_INSTRUCTION = (
     "   `shop_name` MUST contain only the clean raw establishment brand in UPPERCASE. Never include labels, prefixes, punctuation, emojis, or order phrases such as 'Shop:', 'Store:', 'New Order', 'Order for', 'Order:', 'Заказ для', or 'Обновлённый заказ для'.\n"
     "2. `items`: Extract every single ordered product into this array.\n"
     "   - `product_name`: Standardize to 'Gummies', 'Brownie', 'Cookie', or 'Drops' (e.g., 'гамми', 'гамме' -> 'Gummies').\n"
+    "     Users will make typos when writing product names (e.g., 'guumies' instead of 'gummies'). "
+    "You must logically map these typos to the correct canonical categories: 'gummies', 'brownie', "
+    "'cookies', 'cbd drops'. In the JSON output, always return the normalized product type keyword "
+    "in the 'product_name' field.\n"
     "   - `dosage`: Extract ONLY the integer number of milligrams (e.g., '500мг' -> 500).\n"
     "     If the user orders 'gummies' (мармелад), 'brownie' (брауни), or 'cookie' (печенье) WITHOUT specifying milligrams, you MUST automatically set `dosage` to 100. Never leave it null or skip the item.\n"
     "   - `flavor`: Extract the flavor string (e.g., 'клубника', 'strawberry'). If not mentioned -> null.\n"
@@ -112,15 +116,27 @@ PRODUCT_ALIASES = {
     "magic gummies": "Magic Gummies",
     "magic gummy": "Magic Gummies",
     "magic": "Magic Gummies",
+    "guumies": "Gummies",
+    "gumies": "Gummies",
+    "gummys": "Gummies",
     "gummy": "Gummies",
     "gummies": "Gummies",
+    "gumi": "Gummies",
+    "gummie": "Gummies",
     "гамми": "Gummies",
     "гамме": "Gummies",
+    "broni": "Brownie",
+    "browni": "Brownie",
+    "brownies": "Brownie",
     "brownie": "Brownie",
     "брауни": "Brownie",
     "cookie": "Cookie",
     "cookies": "Cookie",
+    "cooki": "Cookie",
+    "cokie": "Cookie",
     "печенье": "Cookie",
+    "cbd drops": "Drops",
+    "cbd drop": "Drops",
     "drop": "Drops",
     "drops": "Drops",
     "капли": "Drops",
@@ -282,6 +298,11 @@ def _standardize_product_name(value: str) -> str:
     for alias, normalized in PRODUCT_ALIASES.items():
         if alias in low:
             return normalized
+    compact_tokens = re.findall(r"[a-zа-яё]+", low, flags=re.I)
+    for token in compact_tokens:
+        best_alias = max(PRODUCT_ALIASES, key=lambda alias: SequenceMatcher(None, token, alias).ratio())
+        if SequenceMatcher(None, token, best_alias).ratio() >= 0.78:
+            return PRODUCT_ALIASES[best_alias]
     return value.strip() or "unknown"
 
 
@@ -359,6 +380,9 @@ def _extract_product_name(line: str, current_product: str | None) -> str:
     for alias in PRODUCT_ALIASES:
         if alias in low:
             return PRODUCT_ALIASES[alias]
+    standardized = _standardize_product_name(line)
+    if standardized != line.strip() and standardized != "unknown":
+        return standardized
     return current_product or "unknown"
 
 
@@ -386,7 +410,7 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
 
         dosage_quantity_matches = list(
             re.finditer(
-                r"(\d+(?:[\.,]\d+)?)\s*(mg|мг|g|гр|г)(?![a-zа-я])\s*(?:x\s*)?(\d+)?",
+                r"(\d+(?:[\.,]\d+)?)\s*(mg|мг|g|гр|г)(?![a-zа-я])\s*(?:x\s*)?(\d+)?\s*(?:packs?|pcs?|pieces?|шт|штук|уп)?",
                 segment_low,
                 flags=re.I,
             )
