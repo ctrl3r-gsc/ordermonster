@@ -12,8 +12,39 @@ from config import get_settings
 from services.orders import sanitize_shop_name
 
 
+CatalogItem = Literal[
+    "Ultimate Gummies Mango 100mg",
+    "Ultimate Gummies Green Apple 250mg",
+    "Ultimate Gummies Strawberry 500mg",
+    "X-Hash Gummies Pineapple 150mg",
+    "X-Hash Gummies Blackcurrant 350mg",
+    "X-Hash Gummies Watermelon 600mg",
+    "Rosin Gummies Green Apple 250mg",
+    "Breakfast Cookies 100mg",
+    "Brownie 100mg",
+    "Cookies 100mg",
+    "Magic Gummies 1g 1000mg",
+    "Magic Gummies 2g 2000mg",
+]
+
+CATALOG_ITEM_DETAILS: dict[str, tuple[str, int]] = {
+    "Ultimate Gummies Mango 100mg": ("Ultimate Gummies Mango", 100),
+    "Ultimate Gummies Green Apple 250mg": ("Ultimate Gummies Green Apple", 250),
+    "Ultimate Gummies Strawberry 500mg": ("Ultimate Gummies Strawberry", 500),
+    "X-Hash Gummies Pineapple 150mg": ("X-Hash Gummies Pineapple", 150),
+    "X-Hash Gummies Blackcurrant 350mg": ("X-Hash Gummies Blackcurrant", 350),
+    "X-Hash Gummies Watermelon 600mg": ("X-Hash Gummies Watermelon", 600),
+    "Rosin Gummies Green Apple 250mg": ("Rosin Gummies Green Apple", 250),
+    "Breakfast Cookies 100mg": ("Breakfast Cookies", 100),
+    "Brownie 100mg": ("Brownie", 100),
+    "Cookies 100mg": ("Cookies", 100),
+    "Magic Gummies 1g 1000mg": ("Magic Gummies 1g", 1000),
+    "Magic Gummies 2g 2000mg": ("Magic Gummies 2g", 2000),
+}
+
+
 class OrderItem(BaseModel):
-    product_name: str
+    product_name: CatalogItem
     dosage: int | None = None
     flavor: str | None = None
     quantity: int = Field(ge=1)
@@ -79,7 +110,8 @@ SYSTEM_INSTRUCTION = (
     "     11. Magic Gummies 1g 1000mg\n"
     "     12. Magic Gummies 2g 2000mg\n"
     "     You MUST map the user's requested item to one of these exact catalog items. Pay strict attention to the brand (for example X-Hash vs Ultimate vs Rosin vs Magic) and the flavor (for example Watermelon vs Mango vs Strawberry vs Green Apple). Do not hallucinate or guess items that are not on this list.\n"
-    "     In JSON, return the exact catalog product name in `product_name` and the catalog dosage as integer milligrams in `dosage`. Example: 'x-hash watermelon gummies' -> {\"product_name\": \"X-Hash Gummies Watermelon\", \"dosage\": 600, \"flavor\": \"watermelon\"}.\n"
+    "     You must classify the user's item strictly into one of the allowed Enum/Literal values. Use brand and flavor context to make the best match, even if the user forgets the exact dosage.\n"
+    "     In JSON, `product_name` MUST be one exact full catalog label from the schema, including dosage. Example: 'x-hash watermelon gummies' -> {\"product_name\": \"X-Hash Gummies Watermelon 600mg\", \"dosage\": 600, \"flavor\": \"watermelon\"}.\n"
     "     If the user mentions a brand/flavor but omits the dosage (mg), map it to the most logical matching item in the provided catalog based on the brand and flavor they DID specify, but NEVER change the flavor or brand just to find a match.\n"
     "     Users will make typos when writing product names (e.g., 'guumies' instead of 'gummies'). "
     "You must logically map these typos to the correct exact catalog product when the brand/flavor/dosage evidence points to one.\n"
@@ -350,6 +382,53 @@ def _default_dosage(product_name: str, dosage: int | None) -> int | None:
     return None
 
 
+def _catalog_label_for_item(product_name: str, dosage: int | None, flavor: str | None = None) -> CatalogItem:
+    low_name = product_name.lower()
+    low_flavor = (flavor or "").lower()
+    search = f"{low_name} {low_flavor}"
+
+    if "magic" in search:
+        return "Magic Gummies 2g 2000mg" if dosage == 2000 or "2g" in search else "Magic Gummies 1g 1000mg"
+    if "breakfast" in search:
+        return "Breakfast Cookies 100mg"
+    if "brownie" in search or "брауни" in search:
+        return "Brownie 100mg"
+    if "cookie" in search or "печенье" in search:
+        return "Cookies 100mg"
+    if "x-hash" in search or "x hash" in search:
+        if "watermelon" in search or dosage == 600:
+            return "X-Hash Gummies Watermelon 600mg"
+        if "blackcurrant" in search or "black currant" in search or dosage == 350:
+            return "X-Hash Gummies Blackcurrant 350mg"
+        return "X-Hash Gummies Pineapple 150mg"
+    if "rosin" in search:
+        return "Rosin Gummies Green Apple 250mg"
+    if "watermelon" in search:
+        return "X-Hash Gummies Watermelon 600mg"
+    if "pineapple" in search:
+        return "X-Hash Gummies Pineapple 150mg"
+    if "blackcurrant" in search or "black currant" in search:
+        return "X-Hash Gummies Blackcurrant 350mg"
+    if "strawberry" in search or "клубник" in search or dosage == 500:
+        return "Ultimate Gummies Strawberry 500mg"
+    if "green apple" in search or "яблок" in search or dosage == 250:
+        return "Ultimate Gummies Green Apple 250mg"
+    return "Ultimate Gummies Mango 100mg"
+
+
+def _normalize_catalog_item(item: OrderItem) -> None:
+    product_name = str(item.product_name)
+    db_name, catalog_dosage = CATALOG_ITEM_DETAILS[product_name]
+    item.product_name = db_name
+    item.dosage = catalog_dosage
+
+
+def _normalize_extracted_order(order: ExtractedOrder) -> ExtractedOrder:
+    for item in order.items:
+        _normalize_catalog_item(item)
+    return order
+
+
 def _extract_inline_shop_name(text: str) -> str | None:
     patterns = [
         r"(?:\bв|для|to|for)\s+([a-zA-Zа-яА-Я0-9 ._-]{2,40}?)(?:[,.;]|\s+(?:оплата|paid|налик|наличные|перевод|карта|банк|total|итого)|$)",
@@ -488,11 +567,13 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
         )
         if dosage_quantity_matches:
             for dosage_quantity in dosage_quantity_matches:
+                dosage = _parse_dosage(dosage_quantity)
+                flavor = next((flavor for flavor in FLAVORS if flavor in segment_low), None)
                 items.append(
                     OrderItem(
-                        product_name=product_name,
-                        dosage=_parse_dosage(dosage_quantity),
-                        flavor=next((flavor for flavor in FLAVORS if flavor in segment_low), None),
+                        product_name=_catalog_label_for_item(product_name, dosage, flavor),
+                        dosage=dosage,
+                        flavor=flavor,
                         quantity=int(dosage_quantity.group(3)) if dosage_quantity.group(3) else prefix_quantity or 1,
                         is_gift=any(word in segment_low for word in GIFT_WORDS),
                     )
@@ -501,11 +582,13 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
         else:
             quantity_match = re.search(r"\b(\d+)\b", segment_low)
             if quantity_match:
+                dosage = _default_dosage(product_name, None)
+                flavor = next((flavor for flavor in FLAVORS if flavor in segment_low), None)
                 items.append(
                     OrderItem(
-                        product_name=product_name,
-                        dosage=_default_dosage(product_name, None),
-                        flavor=next((flavor for flavor in FLAVORS if flavor in segment_low), None),
+                        product_name=_catalog_label_for_item(product_name, dosage, flavor),
+                        dosage=dosage,
+                        flavor=flavor,
                         quantity=int(quantity_match.group(1)),
                         is_gift=any(word in segment_low for word in GIFT_WORDS),
                     )
@@ -538,10 +621,12 @@ def _parse_item_line(line: str, current_product: str | None) -> tuple[OrderItem 
         return None, _standardize_product_name(clean_product) if clean_product else current_product
 
     product_name = _extract_product_name(line, current_product)
+    dosage = _default_dosage(product_name, _parse_dosage(dosage_match))
+    flavor = next((flavor for flavor in FLAVORS if flavor in low), None)
     item = OrderItem(
-        product_name=product_name,
-        dosage=_default_dosage(product_name, _parse_dosage(dosage_match)),
-        flavor=next((flavor for flavor in FLAVORS if flavor in low), None),
+        product_name=_catalog_label_for_item(product_name, dosage, flavor),
+        dosage=dosage,
+        flavor=flavor,
         quantity=_extract_quantity(line),
         is_gift=any(word in low for word in GIFT_WORDS),
     )
@@ -630,10 +715,7 @@ def _merge_with_fallback(
         extracted.suggested_payment_method = fallback.suggested_payment_method
     if extracted.total_amount is None:
         extracted.total_amount = fallback.total_amount
-    for item in extracted.items:
-        item.product_name = _standardize_product_name(item.product_name)
-        item.dosage = _default_dosage(item.product_name, item.dosage)
-    return extracted
+    return _normalize_extracted_order(extracted)
 
 
 async def parse_order_text(text: str, existing_shops: list[str] | None = None) -> dict:
@@ -641,7 +723,7 @@ async def parse_order_text(text: str, existing_shops: list[str] | None = None) -
     api_key = os.getenv("GEMINI_API_KEY")
     fallback = fallback_parse_order_text(text, existing_shops)
     if not api_key:
-        return fallback.model_dump(mode="json")
+        return _normalize_extracted_order(fallback).model_dump(mode="json")
 
     client = genai.Client(api_key=api_key)
     try:
@@ -661,4 +743,4 @@ async def parse_order_text(text: str, existing_shops: list[str] | None = None) -
             parsed = ExtractedOrder.model_validate(parsed)
         return _merge_with_fallback(parsed, fallback, text, existing_shops).model_dump(mode="json")
     except Exception:
-        return fallback.model_dump(mode="json")
+        return _normalize_extracted_order(fallback).model_dump(mode="json")
