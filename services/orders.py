@@ -425,6 +425,10 @@ async def recalculate_order_total(session: AsyncSession, order: Order) -> Order:
     order.total_amount = calculate_order_total(order)
     refresh_payment_status(order)
     await session.flush()
+    order = await get_order(session, order.id)
+    from services.finance import sync_order_income_transaction
+
+    await sync_order_income_transaction(session, order)
     return await get_order(session, order.id)
 
 
@@ -485,6 +489,10 @@ async def add_payment(session: AsyncSession, order: Order, method: str, amount: 
     order = await get_order(session, order.id)
     refresh_payment_status(order)
     await session.flush()
+    order = await get_order(session, order.id)
+    from services.finance import sync_order_income_transaction
+
+    await sync_order_income_transaction(session, order)
     return await get_order(session, order.id)
 
 
@@ -497,6 +505,10 @@ async def set_order_payment_status(session: AsyncSession, order: Order, method: 
         session.add(OrderPayment(order_id=order.id, payment_method=PaymentMethod(method), amount=amount))
         order.payment_status = PaymentStatus.paid
     await session.flush()
+    order = await get_order(session, order.id)
+    from services.finance import sync_order_income_transaction
+
+    await sync_order_income_transaction(session, order)
     await session.commit()
     return await get_order(session, order.id)
 

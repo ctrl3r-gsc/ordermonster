@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -26,6 +26,24 @@ class PaymentMethod(str, enum.Enum):
     cash = "cash"
     transaction = "transaction"
     crypto = "crypto"
+
+
+class CompanyTransactionType(str, enum.Enum):
+    income = "income"
+    expense = "expense"
+
+
+class CompanyTransactionSourceBot(str, enum.Enum):
+    ordermonster = "ordermonster"
+    expense_bot = "expense_bot"
+    manual = "manual"
+
+
+class CompanyTransactionPaymentMethod(str, enum.Enum):
+    cash = "cash"
+    transfer = "transfer"
+    crypto = "crypto"
+    unknown = "unknown"
 
 
 class Shop(Base):
@@ -93,6 +111,7 @@ class Order(Base):
     shop: Mapped[Shop] = relationship(back_populates="orders")
     items: Mapped[list["OrderItem"]] = relationship(back_populates="order", cascade="all, delete-orphan")
     payments: Mapped[list["OrderPayment"]] = relationship(back_populates="order", cascade="all, delete-orphan")
+    company_transactions: Mapped[list["CompanyTransaction"]] = relationship(back_populates="order")
 
 
 class OrderItem(Base):
@@ -119,3 +138,43 @@ class OrderPayment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     order: Mapped[Order] = relationship(back_populates="payments")
+
+
+class CompanyTransaction(Base):
+    __tablename__ = "company_transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type: Mapped[CompanyTransactionType] = mapped_column(Enum(CompanyTransactionType, name="company_transaction_type"), index=True)
+    source_bot: Mapped[CompanyTransactionSourceBot] = mapped_column(
+        Enum(CompanyTransactionSourceBot, name="company_transaction_source_bot"), index=True
+    )
+    category: Mapped[str] = mapped_column(String(120), index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    currency: Mapped[str] = mapped_column(String(10), default="THB", server_default="THB")
+    payment_method: Mapped[CompanyTransactionPaymentMethod] = mapped_column(
+        Enum(CompanyTransactionPaymentMethod, name="company_transaction_payment_method"),
+        default=CompanyTransactionPaymentMethod.unknown,
+        index=True,
+    )
+    related_order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id", ondelete="SET NULL"), nullable=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transaction_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    order: Mapped[Order | None] = relationship(back_populates="company_transactions")
+
+
+Index(
+    "uq_company_transactions_ordermonster_order",
+    CompanyTransaction.source_bot,
+    CompanyTransaction.related_order_id,
+    unique=True,
+    postgresql_where=(
+        (CompanyTransaction.source_bot == CompanyTransactionSourceBot.ordermonster)
+        & (CompanyTransaction.type == CompanyTransactionType.income)
+        & (CompanyTransaction.related_order_id.is_not(None))
+    ),
+)
