@@ -71,6 +71,7 @@ class ExtractedOrder(BaseModel):
     address: str | None = None
     phone_number: str | None = None
     items: list[OrderItem] = Field(default_factory=list)
+    payment_method: Literal["cash", "transaction", "crypto"] | None = None
     suggested_payment_method: Literal["cash", "transaction", "crypto"] | None = None
     total_amount: float | None = None
     unresolved_products: list[dict] = Field(default_factory=list)
@@ -79,6 +80,31 @@ class ExtractedOrder(BaseModel):
 ExtractedOrderItem = OrderItem
 OrderExtractionModel = ExtractedOrder
 
+QUANTITY_TOKEN_RE = re.compile(
+    r"^\s*\d+\s*(?:packs?|pcs?|pieces?|pc|pack|шт|штук|уп|пачек|пачки)\s*$",
+    flags=re.I,
+)
+QUANTITY_RE = re.compile(
+    r"\b\d+\s*(?:packs?|pcs?|pieces?|pc|pack|шт|штук|уп|пачек|пачки)\b",
+    flags=re.I,
+)
+GENERIC_PRODUCT_WORDS = {"gummies", "gummy", "guumies", "gumies", "gummys", "gumi", "gummie"}
+GENERIC_FAMILY_WORDS = GENERIC_PRODUCT_WORDS | {"cookie", "cookies", "brownie", "brownies", "hash"}
+MATCH_STOPWORDS = GENERIC_FAMILY_WORDS | {
+    "mg",
+    "g",
+    "pc",
+    "pcs",
+    "pack",
+    "packs",
+    "piece",
+    "pieces",
+    "shop",
+    "for",
+    "to",
+    "line",
+}
+
 
 def _normalize_match_text(value: str | None) -> str:
     value = (value or "").lower()
@@ -86,6 +112,50 @@ def _normalize_match_text(value: str | None) -> str:
     value = re.sub(r"(\d+)\s*(g|гр|г)\b", r"\1g", value)
     value = value.replace("black currant", "blackcurrant")
     return re.sub(r"[^a-z0-9а-яё]+", " ", value).strip()
+
+
+def _strip_quantity_tokens(value: str | None) -> str:
+    clean = QUANTITY_RE.sub(" ", value or "")
+    clean = re.sub(r"\bx\s*\d+\b|\b\d+\s*x\b", " ", clean, flags=re.I)
+    return re.sub(r"\s+", " ", clean).strip()
+
+
+def _is_quantity_only(value: str | None) -> bool:
+    return bool(QUANTITY_TOKEN_RE.fullmatch(value or ""))
+
+
+def _clean_shop_candidate(value: str | None) -> str | None:
+    clean = (value or "").strip(" -:,.")
+    if not clean or _is_quantity_only(clean):
+        return None
+    low = clean.lower()
+    if re.fullmatch(r"(?:product\s+)?line\s+[a-z0-9]+", low, flags=re.I):
+        return None
+    if low in {"product", "product line", "line", "name"}:
+        return None
+    return clean
+
+
+def _sanitize_parser_shop_name(value: str | None) -> str | None:
+    clean = _clean_shop_candidate(value)
+    if clean is None:
+        return None
+    if re.match(r"^shop\s+\w", clean, flags=re.I):
+        sanitized = re.sub(r"[^a-zA-Z0-9а-яА-Я&.'’\s_-]+", " ", clean)
+        sanitized = re.sub(r"\s+", " ", sanitized).strip(" :-–—.,'’")
+        return sanitized.upper() or None
+    sanitized = sanitize_shop_name(clean)
+    return sanitized or None
+
+
+def _has_explicit_dosage(value: str | None) -> bool:
+    if not value:
+        return False
+    return bool(re.search(r"\b\d+(?:[\.,]\d+)?\s*(?:mg|мг|g|гр|г)\b", value.lower(), flags=re.I))
+
+
+def _word_tokens(value: str | None) -> set[str]:
+    return set(re.findall(r"[a-zа-яё]+", _normalize_match_text(value), flags=re.I))
 
 
 def _catalog_prompt(catalog_products: list[dict] | None) -> str:
@@ -99,8 +169,10 @@ def _catalog_prompt(catalog_products: list[dict] | None) -> str:
             f"dosage={product.get('dosage')}; price={product.get('price')}; aliases=[{aliases}]"
         )
     lines.append(
-        "For every parsed item return product_id from the list. If no listed product fits, set product_id to null. "
-        "Never invent products, prices, ids, or aliases."
+        "For every parsed item return product_id from the list and quantity only. If no listed product fits, "
+        "or the text only says a generic family like gummies without dosage/flavor/line, set product_id to null. "
+        "Never invent products, prices, ids, or aliases. Never put quantity tokens such as 1pc, 2 packs, or 10pcs "
+        "into shop_name."
     )
     return "\n".join(lines)
 
@@ -110,9 +182,9 @@ def _catalog_by_id(catalog_products: list[dict] | None) -> dict[int, dict]:
 
 
 def _item_search_text(item: OrderItem, raw_text: str) -> str:
-    bits = [item.raw_product_text, item.product_name, item.flavor, raw_text]
-    if item.dosage:
-        bits.append(f"{item.dosage}mg")
+    bits = [item.raw_product_text, item.flavor, raw_text]
+    if not item.raw_product_text:
+        bits.append(item.product_name)
     if not any(bits):
         bits.append(raw_text)
     return " ".join(str(bit) for bit in bits if bit)
@@ -129,6 +201,35 @@ def _candidate_strings(product: dict) -> list[str]:
     return [f"{value} {' '.join(dosage_bits)}" for value in values if value]
 
 
+def _family_keywords(product: dict) -> set[str]:
+    keywords: set[str] = set()
+    for value in [product.get("name", ""), *(product.get("aliases") or [])]:
+        keywords.update(token for token in _word_tokens(value) if token not in MATCH_STOPWORDS)
+    return keywords
+
+
+def _query_line_keywords(query: str, catalog: list[dict]) -> set[str]:
+    query_tokens = _word_tokens(query)
+    known_line_keywords: set[str] = set()
+    for product in catalog:
+        known_line_keywords.update(_family_keywords(product))
+    return query_tokens & known_line_keywords
+
+
+def _product_matches_line_keywords(product: dict, line_keywords: set[str]) -> bool:
+    return not line_keywords or bool(_family_keywords(product) & line_keywords)
+
+
+def _generic_product_query(query: str) -> bool:
+    tokens = _word_tokens(query)
+    meaningful = {
+        token
+        for token in tokens
+        if token not in MATCH_STOPWORDS and not token.isdigit() and not re.fullmatch(r"\d+(?:mg|g)", token)
+    }
+    return bool(tokens & GENERIC_PRODUCT_WORDS) and not meaningful
+
+
 def _extract_dosages(text: str) -> set[int]:
     values: set[int] = set()
     for match in re.finditer(r"(\d+(?:[\.,]\d+)?)\s*(mg|мг|g|гр|г)\b", text.lower(), flags=re.I):
@@ -143,30 +244,53 @@ def _extract_dosages(text: str) -> set[int]:
 def _resolve_item_product(item: OrderItem, catalog_products: list[dict] | None, raw_text: str) -> tuple[OrderItem, list[int]]:
     catalog = catalog_products or []
     product_by_id = _catalog_by_id(catalog)
+    query_source = _item_search_text(item, raw_text)
+    query = _normalize_match_text(_strip_quantity_tokens(query_source))
+    line_keywords = _query_line_keywords(query, catalog)
     if item.product_id and item.product_id in product_by_id:
         product = product_by_id[item.product_id]
+        if not _product_matches_line_keywords(product, line_keywords):
+            item.product_id = None
+            return item, [
+                int(candidate["product_id"])
+                for candidate in catalog
+                if _product_matches_line_keywords(candidate, line_keywords)
+            ][:5]
         item.product_name = product.get("name")
         item.dosage = product.get("dosage")
         return item, []
 
-    query = _normalize_match_text(_item_search_text(item, raw_text))
     if not query:
         return item, []
 
     query_dosages = _extract_dosages(query)
+    explicit_dosage = _has_explicit_dosage(query_source) or bool(query_dosages)
+    candidates = [product for product in catalog if _product_matches_line_keywords(product, line_keywords)]
+    if not candidates:
+        candidates = catalog
+    family_candidates = [
+        product
+        for product in candidates
+        if any(word in _normalize_match_text(product.get("name")) for word in GENERIC_FAMILY_WORDS & _word_tokens(query))
+    ]
+    if family_candidates:
+        candidates = family_candidates
+
+    if not explicit_dosage and len(candidates) > 1 and (_generic_product_query(query) or line_keywords):
+        return item, [int(product["product_id"]) for product in candidates[:5]]
+
     scored: list[tuple[float, dict]] = []
-    for product in catalog:
+    for product in candidates:
         best = 0.0
-        exact_alias = False
         for candidate in _candidate_strings(product):
             normalized_candidate = _normalize_match_text(candidate)
             aliases = [_normalize_match_text(alias) for alias in product.get("aliases") or []]
-            if query in aliases or any(alias and alias in query for alias in aliases):
+            exact_alias = query in aliases or any(alias and alias in query for alias in aliases)
+            if exact_alias:
                 best = max(best, 1.0)
-                exact_alias = True
             if normalized_candidate and normalized_candidate in query:
                 best = max(best, 0.95)
-            best = max(best, SequenceMatcher(None, query, normalized_candidate).ratio())
+            best = max(best, SequenceMatcher(None, query, normalized_candidate).ratio() * 0.72)
         product_dosage = product.get("dosage")
         if query_dosages and product_dosage in query_dosages:
             best += 0.25
@@ -187,7 +311,7 @@ def _resolve_item_product(item: OrderItem, catalog_products: list[dict] | None, 
         return item, similar
     best_score, best_product = scored[0]
     second_score = scored[1][0] if len(scored) > 1 else 0
-    if best_score >= 0.86 and best_score - second_score >= 0.04:
+    if best_score >= 0.86 and best_score - second_score >= 0.08:
         item.product_id = int(best_product["product_id"])
         item.product_name = best_product.get("name")
         item.dosage = best_product.get("dosage")
@@ -218,7 +342,7 @@ SYSTEM_INSTRUCTION = (
     "Your job is to parse messy, unstructured text messages into a strict JSON schema.\n\n"
     "CRITICAL RULES:\n"
     "Return clean JSON with these top-level fields: `shop_name`, `address`, `phone_number`, `items`, "
-    "`suggested_payment_method`, and `total_amount`.\n"
+    "`payment_method`, `suggested_payment_method`, and `total_amount`.\n"
     "1. `shop_name`: Extract ONLY the specific name of the shop/client (e.g., 'шаман', 'SHAMAN', 'TAI MA TON'). "
     "NEVER copy the whole text here! If no shop name is mentioned in the text, set it to null.\n"
     "   `shop_name` MUST contain only the clean raw establishment brand in UPPERCASE. Never include labels, prefixes, punctuation, emojis, or order phrases such as 'Shop:', 'Store:', 'New Order', 'Order for', 'Order:', 'Заказ для', or 'Обновлённый заказ для'.\n"
@@ -260,7 +384,7 @@ SYSTEM_INSTRUCTION = (
     "   - `flavor`: Extract the flavor string (e.g., 'клубника', 'strawberry'). If not mentioned -> null.\n"
     "   - `quantity`: Extract the exact integer count. Quantity can appear before or after the product name. If the user writes '10 pcs gummies 500mg', the item quantity MUST be exactly 10, not the default 1.\n"
     "   - `is_gift`: Set to true ONLY if words like 'бонус', 'подарок', 'на пробу', 'gift' are near the item.\n"
-    "5. `suggested_payment_method`: Strictly 'cash', 'transaction', 'crypto', or null.\n"
+    "5. `payment_method` / `suggested_payment_method`: Strictly 'cash', 'transaction', 'crypto', or null.\n"
     "6. `total_amount`: Extract the numeric total price if explicitly provided at the end (e.g., '3000' or '3,000').\n\n"
     "EXAMPLES OF CORRECT PARSING:\n\n"
     "Input: 'бро привет, запиши нам 10 пачек гамми 500мг клубника в шаман, оплата налик'\n"
@@ -597,7 +721,7 @@ def _extract_inline_shop_name(text: str) -> str | None:
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.I)
         if match:
-            return match.group(1).strip(" -:,.") or None
+            return _clean_shop_candidate(match.group(1))
     return None
 
 
@@ -639,6 +763,8 @@ def _extract_address(text: str) -> str | None:
 
 def _line_looks_like_shop(line: str) -> bool:
     low = line.lower()
+    if _is_quantity_only(line):
+        return False
     has_order_signal = bool(re.search(r"\d|\b(mg|мг|g|гр|г|x|pcs?|шт|пач)", low))
     has_sentence_signal = any(word in low for word in ("привет", "запиши", "оплата", "paid", "total", "итого"))
     return len(line) <= 80 and not has_order_signal and not has_sentence_signal
@@ -712,6 +838,7 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
         segment = text[segment_start:segment_end]
         segment_low = segment.lower()
         segment_consumed_until = 0
+        segment_item_added = False
         prefix_quantity = None
         prefix_quantity_match = re.search(
             r"(\d+)\s*(?:packs?|pcs?|pieces?|шт|штук|уп|пачек|пачки)\s*$",
@@ -742,12 +869,29 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
                         is_gift=any(word in segment_low for word in GIFT_WORDS),
                     )
                 )
+                segment_item_added = True
                 segment_consumed_until = max(segment_consumed_until, dosage_quantity.end())
         else:
+            explicit_quantity_match = re.search(
+                r"\b(\d+)\s*(?:packs?|pcs?|pieces?|pc|pack|шт|штук|уп|пачек|пачки)\b",
+                segment_low,
+                flags=re.I,
+            )
             quantity_match = re.search(r"\b(\d+)\b", segment_low)
             if quantity_match or prefix_quantity:
                 dosage = _default_dosage(product_name, None)
-                if prefix_quantity and quantity_match:
+                if prefix_quantity:
+                    quantity = prefix_quantity
+                elif explicit_quantity_match:
+                    quantity = int(explicit_quantity_match.group(1))
+                else:
+                    quantity = int(quantity_match.group(1))
+                bare_values = [int(match.group(1)) for match in re.finditer(r"\b(100|150|250|350|500|600|1000|2000)\b", segment_low)]
+                for bare_value in bare_values:
+                    if bare_value != quantity:
+                        dosage = bare_value
+                        break
+                if prefix_quantity and quantity_match and dosage == _default_dosage(product_name, None):
                     bare_value = int(quantity_match.group(1))
                     if bare_value in {100, 150, 250, 350, 500, 600, 1000, 2000}:
                         dosage = bare_value
@@ -758,13 +902,15 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
                         raw_product_text=f"{alias} {segment}".strip(),
                         dosage=dosage,
                         flavor=flavor,
-                        quantity=prefix_quantity or int(quantity_match.group(1)),
+                        quantity=quantity,
                         is_gift=any(word in segment_low for word in GIFT_WORDS),
                     )
                 )
-                segment_consumed_until = quantity_match.end() if quantity_match else 0
+                segment_item_added = True
+                segment_consumed_until = explicit_quantity_match.end() if explicit_quantity_match else quantity_match.end() if quantity_match else 0
 
-        consumed_until = max(consumed_until, segment_start + segment_consumed_until)
+        if segment_item_added:
+            consumed_until = max(consumed_until, segment_start + segment_consumed_until)
 
     trailing_shop = None
     if consumed_until:
@@ -777,10 +923,11 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
         ).strip(" ,.;:-")
         tail = re.sub(r"https?://\S+|(?:maps\.app\.goo\.gl|goo\.gl|google\.com/maps)/?\S*", " ", tail, flags=re.I)
         tail = re.sub(r"\d{9,11}", " ", tail)
+        tail = QUANTITY_RE.sub(" ", tail)
         tail = re.sub(r"^(?:for|to)\s+(?:shop\s+)?", "", tail, flags=re.I).strip(" ,.;:-")
         tail = re.sub(r"\s+", " ", tail).strip(" ,.;:-")
         if tail and not any(alias in tail.lower() for alias in PRODUCT_ALIASES):
-            trailing_shop = tail
+            trailing_shop = _clean_shop_candidate(tail)
     return items, trailing_shop
 
 
@@ -825,7 +972,7 @@ def _extract_trailing_shop_from_order_line(line: str) -> str | None:
         clean = re.sub(rf"\b{re.escape(alias)}\b", " ", clean, flags=re.I)
     clean = re.sub(r"\b(?:paid|cash|bank|transfer|transaction|card|total|итого)\b.*$", " ", clean, flags=re.I)
     clean = re.sub(r"\s+", " ", clean).strip(" ,.;:-")
-    return clean or None
+    return _clean_shop_candidate(clean)
 
 
 def fallback_parse_order_text(text: str, existing_shops: list[str] | None = None) -> ExtractedOrder:
@@ -863,10 +1010,11 @@ def fallback_parse_order_text(text: str, existing_shops: list[str] | None = None
     )
 
     return ExtractedOrder(
-        shop_name=sanitize_shop_name(resolved_shop_name),
+        shop_name=_sanitize_parser_shop_name(resolved_shop_name),
         address=_extract_address(text),
         phone_number=_extract_phone_number(text),
         items=items,
+        payment_method=payment,
         suggested_payment_method=payment,
         total_amount=total_amount,
     )
@@ -875,6 +1023,8 @@ def fallback_parse_order_text(text: str, existing_shops: list[str] | None = None
 def _is_bad_shop_name(shop_name: str | None, raw_text: str) -> bool:
     if not shop_name:
         return False
+    if _clean_shop_candidate(shop_name) is None:
+        return True
     compact_shop = " ".join(shop_name.split())
     compact_raw = " ".join(raw_text.split())
     return "\n" in shop_name or len(compact_shop) > 80 or compact_shop == compact_raw
@@ -905,6 +1055,10 @@ def _strip_phone_from_address(address: str | None, phone_number: str | None) -> 
 def _finalize_extracted_order(order: ExtractedOrder) -> ExtractedOrder:
     order.phone_number = _clean_optional_text(order.phone_number)
     order.address = _strip_phone_from_address(order.address, order.phone_number)
+    if order.payment_method is None:
+        order.payment_method = order.suggested_payment_method
+    if order.suggested_payment_method is None:
+        order.suggested_payment_method = order.payment_method
     return _normalize_extracted_order(order)
 
 
@@ -915,7 +1069,8 @@ def _merge_with_fallback(
     existing_shops: list[str] | None = None,
 ) -> ExtractedOrder:
     extracted.shop_name = sanitize_shop_name(extracted.shop_name)
-    fallback.shop_name = sanitize_shop_name(fallback.shop_name)
+    extracted.shop_name = extracted.shop_name or None
+    fallback.shop_name = _sanitize_parser_shop_name(fallback.shop_name)
     if _is_bad_shop_name(extracted.shop_name, raw_text):
         extracted.shop_name = None
     matched_shop = _best_existing_shop_match(extracted.shop_name, existing_shops) or _best_shop_mentioned_in_text(
@@ -932,6 +1087,8 @@ def _merge_with_fallback(
     extracted.address = _strip_phone_from_address(extracted.address, extracted.phone_number)
     if extracted.suggested_payment_method is None:
         extracted.suggested_payment_method = fallback.suggested_payment_method
+    if extracted.payment_method is None:
+        extracted.payment_method = extracted.suggested_payment_method or fallback.payment_method
     if extracted.total_amount is None:
         extracted.total_amount = fallback.total_amount
     return _finalize_extracted_order(extracted)
