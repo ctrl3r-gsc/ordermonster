@@ -26,6 +26,7 @@ from services.orders import (
     item_unit_price,
     match_existing_shop_name,
     paid_amount,
+    set_order_payment_status,
     update_item_unit_price,
     remaining_amount,
     sanitize_shop_name,
@@ -161,6 +162,21 @@ def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardM
     is_delivered = order.delivery_status == DeliveryStatus.delivered if order else delivered
     is_paid = order.payment_status == PaymentStatus.paid if order else False
     is_final = is_delivered and is_paid
+    rows = [[InlineKeyboardButton(text="🔄 Change Payment Status", callback_data=f"pay_status:{order_id}")]]
+    if not is_delivered:
+        rows.append([InlineKeyboardButton(text="Edit Delivery", callback_data=f"del:{order_id}")])
+    rows.append([InlineKeyboardButton(text="Edit Prices", callback_data=f"pr:{order_id}")])
+    if order:
+        missing_row = []
+        if not order.shop.address:
+            missing_row.append(InlineKeyboardButton(text="рџ“Ќ Add Address", callback_data=f"add_addr:{order_id}"))
+        if not order.shop.phone_number:
+            missing_row.append(InlineKeyboardButton(text="рџ“± Add Phone", callback_data=f"add_phone:{order_id}"))
+        if missing_row:
+            rows.append(missing_row)
+    rows.append([InlineKeyboardButton(text="Dashboard", callback_data="dash")])
+    rows.append([InlineKeyboardButton(text="вќЊ Delete Order", callback_data=f"delete_order:{order_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
     rows = []
     if not is_final:
         action_row = []
@@ -225,6 +241,18 @@ def payment_keyboard(order_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="Paid in Full", callback_data=f"pf:{order_id}")],
             [InlineKeyboardButton(text="Split Payment", callback_data=f"ps:{order_id}")],
+            [InlineKeyboardButton(text="Back", callback_data=f"ord:{order_id}")],
+        ]
+    )
+
+
+def payment_status_keyboard(order_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💵 Mark as Cash", callback_data=f"pay_status_set:{order_id}:cash")],
+            [InlineKeyboardButton(text="💳 Mark as Transfer", callback_data=f"pay_status_set:{order_id}:transaction")],
+            [InlineKeyboardButton(text="🪙 Mark as Crypto", callback_data=f"pay_status_set:{order_id}:crypto")],
+            [InlineKeyboardButton(text="⏳ Reset to Processing (Unpaid)", callback_data=f"pay_status_set:{order_id}:unpaid")],
             [InlineKeyboardButton(text="Back", callback_data=f"ord:{order_id}")],
         ]
     )
@@ -472,6 +500,27 @@ async def enter_added_phone(message: Message, state: FSMContext, session: AsyncS
 @router.callback_query(F.data.startswith("ord:"))
 async def open_order(callback: CallbackQuery, session: AsyncSession) -> None:
     await show_order_card(callback.message, session, int(callback.data.split(":")[1]))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pay_status:"))
+async def edit_payment_status(callback: CallbackQuery) -> None:
+    order_id = int(callback.data.split(":")[1])
+    await callback.message.edit_text("Change payment status:", reply_markup=payment_status_keyboard(order_id))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pay_status_set:"))
+async def choose_payment_status(callback: CallbackQuery, session: AsyncSession) -> None:
+    _, raw_order_id, status = callback.data.split(":")
+    order = await get_order(session, int(raw_order_id))
+    method = None if status == "unpaid" else status
+    updated_order = await set_order_payment_status(session, order, method)
+    await callback.message.edit_text(
+        order_card_text(updated_order),
+        reply_markup=order_card_keyboard(updated_order),
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 

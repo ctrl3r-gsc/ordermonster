@@ -4,7 +4,7 @@ from decimal import Decimal
 from difflib import SequenceMatcher
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -453,6 +453,19 @@ async def add_payment(session: AsyncSession, order: Order, method: str, amount: 
     order = await get_order(session, order.id)
     refresh_payment_status(order)
     await session.flush()
+    return await get_order(session, order.id)
+
+
+async def set_order_payment_status(session: AsyncSession, order: Order, method: str | None) -> Order:
+    await session.execute(delete(OrderPayment).where(OrderPayment.order_id == order.id))
+    if method is None:
+        order.payment_status = PaymentStatus.unpaid
+    else:
+        amount = decimal_money(order.total_amount)
+        session.add(OrderPayment(order_id=order.id, payment_method=PaymentMethod(method), amount=amount))
+        order.payment_status = PaymentStatus.paid
+    await session.flush()
+    await session.commit()
     return await get_order(session, order.id)
 
 
