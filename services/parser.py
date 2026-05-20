@@ -102,7 +102,6 @@ MATCH_STOPWORDS = GENERIC_FAMILY_WORDS | {
     "shop",
     "for",
     "to",
-    "line",
 }
 
 
@@ -182,7 +181,7 @@ def _catalog_by_id(catalog_products: list[dict] | None) -> dict[int, dict]:
 
 
 def _item_search_text(item: OrderItem, raw_text: str) -> str:
-    bits = [item.raw_product_text, item.flavor, raw_text]
+    bits = [item.raw_product_text, item.flavor]
     if not item.raw_product_text:
         bits.append(item.product_name)
     if not any(bits):
@@ -268,6 +267,14 @@ def _resolve_item_product(item: OrderItem, catalog_products: list[dict] | None, 
     candidates = [product for product in catalog if _product_matches_line_keywords(product, line_keywords)]
     if not candidates:
         candidates = catalog
+    if line_keywords:
+        exact_line_candidates = [
+            product for product in candidates if line_keywords <= _family_keywords(product)
+        ]
+        if len(exact_line_candidates) == 1:
+            candidates = exact_line_candidates
+        elif len(exact_line_candidates) > 1 and not explicit_dosage:
+            return item, [int(product["product_id"]) for product in exact_line_candidates[:5]]
     family_candidates = [
         product
         for product in candidates
@@ -276,7 +283,7 @@ def _resolve_item_product(item: OrderItem, catalog_products: list[dict] | None, 
     if family_candidates:
         candidates = family_candidates
 
-    if not explicit_dosage and len(candidates) > 1 and (_generic_product_query(query) or line_keywords):
+    if not explicit_dosage and len(candidates) > 1 and _generic_product_query(query):
         return item, [int(product["product_id"]) for product in candidates[:5]]
 
     scored: list[tuple[float, dict]] = []
@@ -321,11 +328,12 @@ def _resolve_item_product(item: OrderItem, catalog_products: list[dict] | None, 
 
 def resolve_products_for_order(order: ExtractedOrder, catalog_products: list[dict] | None, raw_text: str) -> ExtractedOrder:
     unresolved: list[dict] = []
-    for item in order.items:
+    for index, item in enumerate(order.items):
         resolved, similar = _resolve_item_product(item, catalog_products, raw_text)
         if not resolved.product_id:
             unresolved.append(
                 {
+                    "item_index": index,
                     "quantity": resolved.quantity,
                     "raw_product_text": resolved.raw_product_text or resolved.product_name,
                     "dosage": resolved.dosage,
@@ -847,6 +855,7 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
         )
         if prefix_quantity_match:
             prefix_quantity = int(prefix_quantity_match.group(1))
+        raw_context = f"{prefix_low} {alias} {segment}".strip()
 
         dosage_quantity_matches = list(
             re.finditer(
@@ -862,7 +871,7 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
                 items.append(
                     OrderItem(
                         product_name=_catalog_label_for_item(product_name, dosage, flavor),
-                        raw_product_text=f"{alias} {segment}".strip(),
+                        raw_product_text=raw_context,
                         dosage=dosage,
                         flavor=flavor,
                         quantity=int(dosage_quantity.group(3)) if dosage_quantity.group(3) else prefix_quantity or 1,
@@ -899,7 +908,7 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
                 items.append(
                     OrderItem(
                         product_name=_catalog_label_for_item(product_name, dosage, flavor),
-                        raw_product_text=f"{alias} {segment}".strip(),
+                        raw_product_text=raw_context,
                         dosage=dosage,
                         flavor=flavor,
                         quantity=quantity,
@@ -975,6 +984,29 @@ def _extract_trailing_shop_from_order_line(line: str) -> str | None:
     return _clean_shop_candidate(clean)
 
 
+def _split_item_line_candidates(line: str) -> list[str]:
+    quantity_matches = list(
+        re.finditer(
+            r"\b\d+\s*(?:packs?|pcs?|pieces?|pc|pack|С€С‚|С€С‚СѓРє|СѓРї|РїР°С‡РµРє|РїР°С‡РєРё)\b",
+            line,
+            flags=re.I,
+        )
+    )
+    if len(quantity_matches) <= 1:
+        return [line]
+
+    segments: list[str] = []
+    start = 0
+    for index, match in enumerate(quantity_matches):
+        end = match.end()
+        next_start = quantity_matches[index + 1].start() if index + 1 < len(quantity_matches) else None
+        if next_start is not None and re.search(r"[a-zA-ZР°-СЏРђ-РЇ]", line[end:next_start]):
+            segments.append(line[start:end].strip(" ,.;:-"))
+            start = end
+    segments.append(line[start:].strip(" ,.;:-"))
+    return [segment for segment in segments if segment]
+
+
 def fallback_parse_order_text(text: str, existing_shops: list[str] | None = None) -> ExtractedOrder:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     dense_items, dense_shop = _parse_dense_inline_items(text) if "\n" not in text else ([], None)
@@ -997,11 +1029,16 @@ def fallback_parse_order_text(text: str, existing_shops: list[str] | None = None
             low = line.lower()
             if any(word in low for word in skip_words) and not re.search(r"(mg|мг|g|гр|г)(?![a-zа-я])", low):
                 continue
-            item, current_product = _parse_item_line(line, current_product)
-            if item:
-                items.append(item)
-                if not shop_name:
-                    shop_name = _extract_trailing_shop_from_order_line(line)
+            for segment in _split_item_line_candidates(line):
+                item, current_product = _parse_item_line(segment, current_product)
+                if item:
+                    items.append(item)
+                    if (
+                        not shop_name
+                        and len(lines) == 1
+                        and any(alias in segment.lower() for alias in PRODUCT_ALIASES)
+                    ):
+                        shop_name = _extract_trailing_shop_from_order_line(segment)
 
     resolved_shop_name = (
         _best_existing_shop_match(shop_name, existing_shops)
@@ -1078,7 +1115,7 @@ def _merge_with_fallback(
     )
     if matched_shop:
         extracted.shop_name = sanitize_shop_name(matched_shop)
-    if not extracted.items and fallback.items:
+    if fallback.items and (not extracted.items or len(fallback.items) > len(extracted.items)):
         extracted.items = fallback.items
     if extracted.shop_name is None and fallback.shop_name and not _is_bad_shop_name(fallback.shop_name, raw_text):
         extracted.shop_name = sanitize_shop_name(fallback.shop_name)

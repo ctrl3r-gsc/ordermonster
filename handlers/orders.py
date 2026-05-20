@@ -10,7 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import DeliveryStatus, Order
+from db.models import DeliveryStatus, Order, Shop
 from services.catalog import active_catalog, all_catalog, catalog_for_parser
 from services.orders import (
     add_payment,
@@ -178,9 +178,10 @@ def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardM
     rows.append([InlineKeyboardButton(text="🗑 Delete Order", callback_data=f"delete_order:{order_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 def draft_order_card_text(parsed: dict) -> str:
+    shop_label = escape(str(parsed.get("shop_name") or "missing"))
     lines = [
         "📦 <b>Draft Order</b>",
-        "🏪 Shop: <b>missing</b>",
+        f"🏪 Shop: <b>{shop_label}</b>",
     ]
     address = (parsed.get("address") or "").strip()
     phone = (parsed.get("phone_number") or "").strip()
@@ -204,14 +205,25 @@ def draft_order_keyboard() -> InlineKeyboardMarkup:
     )
 
 
-def product_choice_keyboard(products, product_ids: list[int]) -> InlineKeyboardMarkup:
+def draft_shop_choice_keyboard(shops: list[Shop]) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=shop.name[:60], callback_data=f"draft:shop:{shop.id}")]
+        for shop in shops
+    ]
+    rows.append([InlineKeyboardButton(text="➕ Add New Shop", callback_data="draft:add_shop")])
+    rows.append([InlineKeyboardButton(text="🔙 Back", callback_data="draft:back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def product_choice_keyboard(products, product_ids: list[int], item_index: int | None = None) -> InlineKeyboardMarkup:
     by_id = {product.id: product for product in products}
     rows = []
     for product_id in product_ids:
         product = by_id.get(int(product_id))
         if not product:
             continue
-        rows.append([InlineKeyboardButton(text=product.name[:60], callback_data=f"pick_product:{product.id}")])
+        callback_data = f"pick_product:{item_index}:{product.id}" if item_index is not None else f"pick_product:{product.id}"
+        rows.append([InlineKeyboardButton(text=product.name[:60], callback_data=callback_data)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -220,13 +232,30 @@ async def ask_product_clarification(message: Message, state: FSMContext, parsed:
     if not unresolved:
         return False
     first = unresolved[0]
+    item_index = int(first.get("item_index") or 0)
     similar_ids = first.get("similar_product_ids") or [product.id for product in products[:6]]
     await state.set_state(OrderFlow.selecting_product)
     await state.update_data(parsed=parsed)
     await respond_to_message(
         message,
         "Какой именно товар ты имел в виду?",
-        reply_markup=product_choice_keyboard(products, similar_ids),
+        reply_markup=product_choice_keyboard(products, similar_ids, item_index),
+    )
+    return True
+
+
+async def edit_product_clarification(callback: CallbackQuery, state: FSMContext, parsed: dict, products) -> bool:
+    unresolved = parsed.get("unresolved_products") or []
+    if not unresolved:
+        return False
+    first = unresolved[0]
+    item_index = int(first.get("item_index") or 0)
+    similar_ids = first.get("similar_product_ids") or [product.id for product in products[:6]]
+    await state.set_state(OrderFlow.selecting_product)
+    await state.update_data(parsed=parsed)
+    await callback.message.edit_text(
+        "Какой именно товар ты имел в виду?",
+        reply_markup=product_choice_keyboard(products, similar_ids, item_index),
     )
     return True
 
@@ -441,8 +470,15 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
 
 @router.callback_query(OrderFlow.selecting_product, F.data.startswith("pick_product:"))
 async def pick_product(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    product_id = int(callback.data.split(":")[1])
-    product = next((item for item in await active_catalog(session) if item.id == product_id), None)
+    parts = callback.data.split(":")
+    if len(parts) >= 3:
+        item_index = int(parts[1])
+        product_id = int(parts[2])
+    else:
+        item_index = None
+        product_id = int(parts[1])
+    products = await active_catalog(session)
+    product = next((item for item in products if item.id == product_id), None)
     if product is None:
         await callback.answer("Product is not active.", show_alert=True)
         return
@@ -451,14 +487,24 @@ async def pick_product(callback: CallbackQuery, state: FSMContext, session: Asyn
     if not parsed:
         await callback.answer("Order draft expired. Send the order again.", show_alert=True)
         return
-    for item in parsed.get("items", []):
-        if not item.get("product_id"):
-            item["product_id"] = product.id
-            item["product_name"] = product.name
-            item["dosage"] = product.dosage
-            item["flavor"] = product.flavor
-            break
-    parsed["unresolved_products"] = []
+    items = parsed.get("items", [])
+    if item_index is None:
+        item_index = next((index for index, item in enumerate(items) if not item.get("product_id")), 0)
+    if item_index < 0 or item_index >= len(items):
+        await callback.answer("Order item expired. Send the order again.", show_alert=True)
+        return
+    items[item_index]["product_id"] = product.id
+    items[item_index]["product_name"] = product.name
+    items[item_index]["dosage"] = product.dosage
+    items[item_index]["flavor"] = product.flavor
+    parsed["unresolved_products"] = [
+        unresolved
+        for unresolved in parsed.get("unresolved_products", [])
+        if int(unresolved.get("item_index") or 0) != item_index
+    ]
+    if await edit_product_clarification(callback, state, parsed, products):
+        await callback.answer()
+        return
     shops = await all_shops(session)
     shop_name = sanitize_shop_name((parsed.get("shop_name") or "").upper().strip())
     shop_name, parsed["address"] = sanitize_shop_input(shop_name, parsed.get("address"), parsed.get("phone_number"))
@@ -485,7 +531,56 @@ async def pick_product(callback: CallbackQuery, state: FSMContext, session: Asyn
 
 
 @router.callback_query(F.data == "draft:set_shop")
-async def draft_set_shop(callback: CallbackQuery, state: FSMContext) -> None:
+async def draft_set_shop(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    data = await state.get_data()
+    if not data.get("parsed"):
+        await callback.answer("Order draft expired. Send the order again.", show_alert=True)
+        return
+    shops = await all_shops(session)
+    await callback.message.edit_text(
+        "Choose a shop for this order.",
+        reply_markup=draft_shop_choice_keyboard(shops),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "draft:back")
+async def draft_back(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    parsed = data.get("parsed")
+    if not parsed:
+        await callback.answer("Order draft expired. Send the order again.", show_alert=True)
+        return
+    await state.set_state(None)
+    await callback.message.edit_text(
+        draft_order_card_text(parsed),
+        reply_markup=draft_order_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("draft:shop:"))
+async def draft_choose_existing_shop(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    data = await state.get_data()
+    parsed = data.get("parsed")
+    if not parsed:
+        await callback.answer("Order draft expired. Send the order again.", show_alert=True)
+        return
+    shop_id = int(callback.data.rsplit(":", 1)[1])
+    shop = await session.get(Shop, shop_id)
+    if shop is None:
+        await callback.answer("Shop not found.", show_alert=True)
+        return
+    parsed["shop_name"] = shop.name
+    order = await create_order_from_parsed(session, parsed, shop, callback.from_user.id)
+    await state.clear()
+    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "draft:add_shop")
+async def draft_add_new_shop(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     if not data.get("parsed"):
         await callback.answer("Order draft expired. Send the order again.", show_alert=True)

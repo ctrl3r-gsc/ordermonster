@@ -144,7 +144,7 @@ def sanitize_shop_input(raw_name, raw_address, phone_number: str | None = None):
 
     clean_address = (raw_address or "").strip()
     if not clean_address or "googleusercontent" in clean_address.lower():
-        clean_address = "Address not found"
+        clean_address = None
     else:
         if phone_number:
             clean_address = clean_address.replace(phone_number, " ")

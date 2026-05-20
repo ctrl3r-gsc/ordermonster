@@ -26,6 +26,34 @@ TEST_CATALOG = [
         "price": 90,
         "aliases": ["line b gummies", "line b gummies 100", "line b"],
     },
+    {
+        "product_id": 301,
+        "name": "ITEM A 100mg",
+        "dosage": 100,
+        "price": 70,
+        "aliases": ["item a", "item a 100mg"],
+    },
+    {
+        "product_id": 302,
+        "name": "ITEM B",
+        "dosage": None,
+        "price": 60,
+        "aliases": ["item b"],
+    },
+    {
+        "product_id": 401,
+        "name": "PRODUCT 100mg",
+        "dosage": 100,
+        "price": 70,
+        "aliases": ["product", "product 100mg"],
+    },
+    {
+        "product_id": 402,
+        "name": "ANOTHER PRODUCT",
+        "dosage": None,
+        "price": 60,
+        "aliases": ["another product"],
+    },
 ]
 
 
@@ -47,6 +75,22 @@ async def run_tests() -> None:
     assert dosage["items"][0]["product_id"] == 102
     assert dosage["items"][0]["quantity"] == 10
     assert dosage["shop_name"] == "SHOP NAME"
+
+    multi_items = await parse_order_text("item A 100mg 6pc\nitem B 20pcs", catalog_products=TEST_CATALOG)
+    assert multi_items["shop_name"] is None
+    assert len(multi_items["items"]) == 2
+    assert multi_items["items"][0]["product_id"] == 301
+    assert multi_items["items"][0]["quantity"] == 6
+    assert multi_items["items"][1]["product_id"] == 302
+    assert multi_items["items"][1]["quantity"] == 20
+
+    product_items = await parse_order_text("product 100mg 6pc\nanother product 20pcs", catalog_products=TEST_CATALOG)
+    assert product_items["shop_name"] is None
+    assert len(product_items["items"]) == 2
+    assert product_items["items"][0]["product_id"] == 401
+    assert product_items["items"][0]["quantity"] == 6
+    assert product_items["items"][1]["product_id"] == 402
+    assert product_items["items"][1]["quantity"] == 20
 
 
 if __name__ == "__main__":
