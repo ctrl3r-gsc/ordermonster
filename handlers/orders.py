@@ -160,33 +160,10 @@ def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardM
     order = order_or_id if hasattr(order_or_id, "id") else None
     order_id = order.id if order else int(order_or_id)
     is_delivered = order.delivery_status == DeliveryStatus.delivered if order else delivered
-    is_paid = order.payment_status == PaymentStatus.paid if order else False
-    is_final = is_delivered and is_paid
     rows = [[InlineKeyboardButton(text="🔄 Change Payment Status", callback_data=f"pay_status:{order_id}")]]
     if not is_delivered:
         rows.append([InlineKeyboardButton(text="Edit Delivery", callback_data=f"del:{order_id}")])
     rows.append([InlineKeyboardButton(text="Edit Prices", callback_data=f"pr:{order_id}")])
-    if order:
-        missing_row = []
-        if not order.shop.address:
-            missing_row.append(InlineKeyboardButton(text="рџ“Ќ Add Address", callback_data=f"add_addr:{order_id}"))
-        if not order.shop.phone_number:
-            missing_row.append(InlineKeyboardButton(text="рџ“± Add Phone", callback_data=f"add_phone:{order_id}"))
-        if missing_row:
-            rows.append(missing_row)
-    rows.append([InlineKeyboardButton(text="Dashboard", callback_data="dash")])
-    rows.append([InlineKeyboardButton(text="вќЊ Delete Order", callback_data=f"delete_order:{order_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-    rows = []
-    if not is_final:
-        action_row = []
-        if not is_paid:
-            action_row.append(InlineKeyboardButton(text="Edit Payment", callback_data=f"pay:{order_id}"))
-        if not is_delivered:
-            action_row.append(InlineKeyboardButton(text="Edit Delivery", callback_data=f"del:{order_id}"))
-        if action_row:
-            rows.append(action_row)
-        rows.append([InlineKeyboardButton(text="✏️ Edit Prices", callback_data=f"pr:{order_id}")])
     if order:
         missing_row = []
         if not order.shop.address:
@@ -196,9 +173,8 @@ def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardM
         if missing_row:
             rows.append(missing_row)
     rows.append([InlineKeyboardButton(text="Dashboard", callback_data="dash")])
-    rows.append([InlineKeyboardButton(text="❌ Delete Order", callback_data=f"delete_order:{order_id}")])
+    rows.append([InlineKeyboardButton(text="🗑 Delete Order", callback_data=f"delete_order:{order_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
 
 def draft_order_card_text(parsed: dict) -> str:
     lines = [
