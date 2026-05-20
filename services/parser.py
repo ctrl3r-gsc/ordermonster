@@ -20,7 +20,7 @@ CatalogItem = Literal[
     "X-HASH GUMMIES BLACKCURRANT 350mg",
     "X-HASH GUMMIES WATERMELON 600mg",
     "ROSIN GUMMIES GREEN APPLE 250mg",
-    "BREAKFAST COOKIES 100mg THC",
+    "BREAKFAST COOKIES 100mg",
     "BROWNIE 100mg THC",
     "COOKIES 100mg THC",
     "MAGIC GUMMIES 1g",
@@ -36,7 +36,7 @@ CATALOG_ITEM_DETAILS: dict[str, tuple[str, int | None]] = {
     "X-HASH GUMMIES BLACKCURRANT 350mg": ("X-HASH GUMMIES BLACKCURRANT 350mg", 350),
     "X-HASH GUMMIES WATERMELON 600mg": ("X-HASH GUMMIES WATERMELON 600mg", 600),
     "ROSIN GUMMIES GREEN APPLE 250mg": ("ROSIN GUMMIES GREEN APPLE 250mg", 250),
-    "BREAKFAST COOKIES 100mg THC": ("BREAKFAST COOKIES 100mg THC", 100),
+    "BREAKFAST COOKIES 100mg": ("BREAKFAST COOKIES 100mg", 100),
     "BROWNIE 100mg THC": ("BROWNIE 100mg THC", 100),
     "COOKIES 100mg THC": ("COOKIES 100mg THC", 100),
     "MAGIC GUMMIES 1g": ("MAGIC GUMMIES 1g", 1000),
@@ -106,7 +106,7 @@ SYSTEM_INSTRUCTION = (
     "     5. X-HASH GUMMIES BLACKCURRANT 350mg\n"
     "     6. X-HASH GUMMIES WATERMELON 600mg\n"
     "     7. ROSIN GUMMIES GREEN APPLE 250mg\n"
-    "     8. BREAKFAST COOKIES 100mg THC\n"
+    "     8. BREAKFAST COOKIES 100mg\n"
     "     9. BROWNIE 100mg THC\n"
     "     10. COOKIES 100mg THC\n"
     "     11. MAGIC GUMMIES 1g\n"
@@ -399,7 +399,7 @@ def _catalog_label_for_item(product_name: str, dosage: int | None, flavor: str |
     if "magic" in search:
         return "MAGIC GUMMIES 2g" if dosage == 2000 or "2g" in search else "MAGIC GUMMIES 1g"
     if "breakfast" in search:
-        return "BREAKFAST COOKIES 100mg THC"
+        return "BREAKFAST COOKIES 100mg"
     if "brownie" in search or "брауни" in search:
         return "BROWNIE 100mg THC"
     if "cookie" in search or "печенье" in search:

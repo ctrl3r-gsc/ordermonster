@@ -307,6 +307,11 @@ async def shop_from_parsed(session: AsyncSession, parsed: dict, fallback_shop: S
 
 
 async def create_order_from_parsed(session: AsyncSession, parsed: dict, shop: Shop, user_id: int) -> Order:
+    raw_address = parsed.get("address") or ""
+    extracted_phone = parsed.get("phone_number") or ""
+    clean_address = raw_address.replace(extracted_phone, "").strip()
+    if extracted_phone:
+        parsed = {**parsed, "address": clean_address}
     shop = await shop_from_parsed(session, parsed, fallback_shop=shop)
     await backfill_missing_order_display_numbers(session)
     order = Order(
@@ -443,7 +448,7 @@ async def dashboard_orders(session: AsyncSession, page: int = 0, limit: int = 10
             await session.scalars(
                 select(Order)
                 .options(selectinload(Order.shop))
-                .order_by(Order.id.desc())
+                .order_by(Order.display_number.desc())
                 .limit(limit)
                 .offset(page * limit)
             )
