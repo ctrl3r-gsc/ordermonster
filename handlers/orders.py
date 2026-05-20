@@ -15,9 +15,8 @@ from services.orders import (
     add_payment,
     all_shops,
     create_order_from_parsed,
+    dashboard_has_next_page,
     dashboard_orders,
-    dashboard_day_bounds,
-    bangkok_datetime,
     format_dashboard_datetime,
     format_order_datetime,
     get_or_create_shop,
@@ -34,6 +33,7 @@ from services.parser import parse_order_text
 
 router = Router()
 ORDER_CHAT_TYPES = (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP)
+DASHBOARD_PAGE_SIZE = 10
 
 
 async def respond_to_message(message: Message, text: str, **kwargs):
@@ -279,27 +279,17 @@ async def show_order_card(target: Message, session: AsyncSession, order_id: int)
     )
 
 
-def is_today_order(order) -> bool:
-    start, end = dashboard_day_bounds()
-    created_at = order.created_at
-    if created_at is None:
-        return False
-    created_at = bangkok_datetime(created_at)
-    return start <= created_at < end
-
-
-def dashboard_summary_text(orders) -> str:
-    today_count = sum(1 for order in orders if is_today_order(order))
+def dashboard_summary_text(orders, page: int = 0) -> str:
     pending_deliveries = sum(1 for order in orders if order.delivery_status != DeliveryStatus.delivered)
     processing_payments = sum(1 for order in orders if order.payment_status.value != "paid")
     return "\n".join(
         [
             "<b>Dashboard</b>",
-            f"Today orders: <b>{today_count}</b>",
+            f"Page: <b>{page + 1}</b>",
             f"Pending deliveries: <b>{pending_deliveries}</b>",
             f"Processing payments: <b>{processing_payments}</b>",
             "",
-            "Latest 10 orders from today:",
+            "Latest orders:",
         ]
     )
 
@@ -310,7 +300,7 @@ def dashboard_order_state_emoji(order) -> str:
     return "⌛"
 
 
-def dashboard_keyboard(orders) -> InlineKeyboardMarkup:
+def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineKeyboardMarkup:
     rows = []
     for order in orders:
         created_at = format_dashboard_datetime(order.created_at).replace(" ", " (") + ")"
@@ -319,6 +309,13 @@ def dashboard_keyboard(orders) -> InlineKeyboardMarkup:
             f"{dashboard_order_state_emoji(order)}"
         )
         rows.append([InlineKeyboardButton(text=text[:64], callback_data=f"ord:{order.id}")])
+    pagination_row = []
+    if page > 0:
+        pagination_row.append(InlineKeyboardButton(text="⬅️ Prev", callback_data=f"dash_page:{page - 1}"))
+    if has_next:
+        pagination_row.append(InlineKeyboardButton(text="Next ➡️", callback_data=f"dash_page:{page + 1}"))
+    if pagination_row:
+        rows.append(pagination_row)
     rows.append([InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -334,13 +331,16 @@ async def start(message: Message) -> None:
 
 @router.callback_query(F.data == "dash")
 async def dashboard_cb(callback: CallbackQuery, session: AsyncSession) -> None:
-    orders = await dashboard_orders(session)
+    orders = await dashboard_orders(session, page=0, limit=DASHBOARD_PAGE_SIZE)
+    has_next = await dashboard_has_next_page(session, page=0, limit=DASHBOARD_PAGE_SIZE)
     if not orders:
-        await callback.message.edit_text("No dashboard orders for today.", reply_markup=dashboard_empty_keyboard())
+        await callback.message.edit_text("No dashboard orders found.", reply_markup=dashboard_empty_keyboard())
         await callback.answer()
         return
     await callback.message.edit_text(
-        dashboard_summary_text(orders), reply_markup=dashboard_keyboard(orders), parse_mode="HTML"
+        dashboard_summary_text(orders, page=0),
+        reply_markup=dashboard_keyboard(orders, page=0, has_next=has_next),
+        parse_mode="HTML",
     )
     await callback.answer()
 
@@ -594,13 +594,14 @@ async def confirm_delete(callback: CallbackQuery, session: AsyncSession) -> None
     if callback.message and callback.message.text and callback.message.text.lstrip().startswith("📦"):
         await callback.message.delete()
     else:
-        orders = await dashboard_orders(session)
+        orders = await dashboard_orders(session, page=0, limit=DASHBOARD_PAGE_SIZE)
+        has_next = await dashboard_has_next_page(session, page=0, limit=DASHBOARD_PAGE_SIZE)
         if not orders:
-            await callback.message.edit_text("No dashboard orders for today.")
+            await callback.message.edit_text("No dashboard orders found.")
         else:
             await callback.message.edit_text(
-                dashboard_summary_text(orders),
-                reply_markup=dashboard_keyboard(orders),
+                dashboard_summary_text(orders, page=0),
+                reply_markup=dashboard_keyboard(orders, page=0, has_next=has_next),
                 parse_mode="HTML",
             )
 
@@ -619,13 +620,14 @@ async def cancel_delete(callback: CallbackQuery, session: AsyncSession) -> None:
     if callback.message and callback.message.text and callback.message.text.lstrip().startswith("📦"):
         await show_order_card(callback.message, session, order_id)
     else:
-        orders = await dashboard_orders(session)
+        orders = await dashboard_orders(session, page=0, limit=DASHBOARD_PAGE_SIZE)
+        has_next = await dashboard_has_next_page(session, page=0, limit=DASHBOARD_PAGE_SIZE)
         if not orders:
-            await callback.message.edit_text("No dashboard orders for today.")
+            await callback.message.edit_text("No dashboard orders found.")
         else:
             await callback.message.edit_text(
-                dashboard_summary_text(orders),
-                reply_markup=dashboard_keyboard(orders),
+                dashboard_summary_text(orders, page=0),
+                reply_markup=dashboard_keyboard(orders, page=0, has_next=has_next),
                 parse_mode="HTML",
             )
 

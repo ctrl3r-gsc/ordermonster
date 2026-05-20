@@ -1,6 +1,5 @@
-import os
 import re
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from decimal import Decimal
 from difflib import SequenceMatcher
 from zoneinfo import ZoneInfo
@@ -393,26 +392,24 @@ async def add_payment(session: AsyncSession, order: Order, method: str, amount: 
     return await get_order(session, order.id)
 
 
-def dashboard_day_bounds() -> tuple[datetime, datetime]:
-    timezone_name = os.getenv("APP_TIMEZONE", "Asia/Bangkok")
-    tz = ZoneInfo(timezone_name)
-    today = datetime.now(tz).date()
-    start = datetime.combine(today, time.min, tzinfo=tz)
-    end = start + timedelta(days=1)
-    return start, end
-
-
-async def dashboard_orders(session: AsyncSession) -> list[Order]:
-    today_start, _ = dashboard_day_bounds()
-
+async def dashboard_orders(session: AsyncSession, page: int = 0, limit: int = 10) -> list[Order]:
+    page = max(page, 0)
+    limit = max(limit, 1)
     return list(
         (
             await session.scalars(
                 select(Order)
-                .where(Order.created_at >= today_start)
                 .options(selectinload(Order.shop))
-                .order_by(Order.created_at.desc(), Order.updated_at.desc())
-                .limit(10)
+                .order_by(Order.id.desc())
+                .limit(limit)
+                .offset(page * limit)
             )
         ).all()
     )
+
+
+async def dashboard_has_next_page(session: AsyncSession, page: int = 0, limit: int = 10) -> bool:
+    page = max(page, 0)
+    limit = max(limit, 1)
+    total_orders = await session.scalar(select(func.count(Order.id)))
+    return (total_orders or 0) > (page + 1) * limit

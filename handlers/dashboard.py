@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import DeliveryStatus, Order, OrderItem, OrderPayment, Shop
 from handlers.orders import order_card_keyboard, order_card_text
-from services.orders import all_shops, bangkok_datetime, dashboard_orders, dashboard_day_bounds, format_dashboard_datetime, get_order
+from services.orders import all_shops, dashboard_has_next_page, dashboard_orders, format_dashboard_datetime, get_order
 
 router = Router()
 ORDER_CHAT_TYPES = (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP)
@@ -22,27 +22,20 @@ async def respond_to_message(message: Message, text: str, **kwargs):
     return await message.answer(text, **kwargs)
 
 
-def is_today_order(order) -> bool:
-    start, end = dashboard_day_bounds()
-    created_at = order.created_at
-    if created_at is None:
-        return False
-    created_at = bangkok_datetime(created_at)
-    return start <= created_at < end
+DASHBOARD_PAGE_SIZE = 10
 
 
-def dashboard_summary_text(orders) -> str:
-    today_count = sum(1 for order in orders if is_today_order(order))
+def dashboard_summary_text(orders, page: int = 0) -> str:
     pending_deliveries = sum(1 for order in orders if order.delivery_status != DeliveryStatus.delivered)
     processing_payments = sum(1 for order in orders if order.payment_status.value != "paid")
     return "\n".join(
         [
             "<b>Dashboard</b>",
-            f"Today orders: <b>{today_count}</b>",
+            f"Page: <b>{page + 1}</b>",
             f"Pending deliveries: <b>{pending_deliveries}</b>",
             f"Processing payments: <b>{processing_payments}</b>",
             "",
-            "Latest 10 orders from today:",
+            "Latest orders:",
         ]
     )
 
@@ -59,11 +52,18 @@ def dashboard_button_text(order) -> str:
     return f"#{order.id} | 📅 {created_at} | {shop_name} | {order_state_emoji(order)}"[:64]
 
 
-def dashboard_keyboard(orders) -> InlineKeyboardMarkup:
+def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=dashboard_button_text(order), callback_data=f"dash_order:{order.id}")]
         for order in orders
     ]
+    pagination_row = []
+    if page > 0:
+        pagination_row.append(InlineKeyboardButton(text="⬅️ Prev", callback_data=f"dash_page:{page - 1}"))
+    if has_next:
+        pagination_row.append(InlineKeyboardButton(text="Next ➡️", callback_data=f"dash_page:{page + 1}"))
+    if pagination_row:
+        rows.append(pagination_row)
     rows.append([InlineKeyboardButton(text="🏪 Магазины", callback_data="shops:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -131,14 +131,16 @@ async def render_shops_list(callback: CallbackQuery, session: AsyncSession, pref
     await callback.message.edit_text(text, reply_markup=shops_keyboard(shops), parse_mode="HTML")
 
 
-async def render_dashboard(callback: CallbackQuery, session: AsyncSession) -> None:
-    orders = await dashboard_orders(session)
+async def render_dashboard(callback: CallbackQuery, session: AsyncSession, page: int = 0) -> None:
+    page = max(page, 0)
+    orders = await dashboard_orders(session, page=page, limit=DASHBOARD_PAGE_SIZE)
+    has_next = await dashboard_has_next_page(session, page=page, limit=DASHBOARD_PAGE_SIZE)
     if not orders:
-        await callback.message.edit_text("No dashboard orders for today.", reply_markup=dashboard_empty_keyboard())
+        await callback.message.edit_text("No dashboard orders found.", reply_markup=dashboard_empty_keyboard())
         return
     await callback.message.edit_text(
-        dashboard_summary_text(orders),
-        reply_markup=dashboard_keyboard(orders),
+        dashboard_summary_text(orders, page=page),
+        reply_markup=dashboard_keyboard(orders, page=page, has_next=has_next),
         parse_mode="HTML",
     )
 
@@ -155,14 +157,15 @@ async def delete_shop_with_orders(session: AsyncSession, shop_id: int) -> None:
 @router.message(Command("dashboard"), F.chat.type.in_(ORDER_CHAT_TYPES))
 async def dashboard_command(message: Message, session: AsyncSession) -> None:
     try:
-        orders = await dashboard_orders(session)
+        orders = await dashboard_orders(session, page=0, limit=DASHBOARD_PAGE_SIZE)
+        has_next = await dashboard_has_next_page(session, page=0, limit=DASHBOARD_PAGE_SIZE)
         if not orders:
-            await respond_to_message(message, "No dashboard orders for today.", reply_markup=dashboard_empty_keyboard())
+            await respond_to_message(message, "No dashboard orders found.", reply_markup=dashboard_empty_keyboard())
             return
         await respond_to_message(
             message,
-            dashboard_summary_text(orders),
-            reply_markup=dashboard_keyboard(orders),
+            dashboard_summary_text(orders, page=0),
+            reply_markup=dashboard_keyboard(orders, page=0, has_next=has_next),
             parse_mode="HTML",
         )
     except Exception:
@@ -188,6 +191,18 @@ async def shops_list(callback: CallbackQuery, session: AsyncSession) -> None:
 @router.callback_query(F.data == "shops:dashboard")
 async def shops_back_to_dashboard(callback: CallbackQuery, session: AsyncSession) -> None:
     await render_dashboard(callback, session)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("dash_page:"))
+async def dashboard_page(callback: CallbackQuery, session: AsyncSession) -> None:
+    raw_page = callback.data.split(":", 1)[1]
+    try:
+        page = max(int(raw_page), 0)
+    except ValueError:
+        await callback.answer("Invalid dashboard page.", show_alert=True)
+        return
+    await render_dashboard(callback, session, page=page)
     await callback.answer()
 
 

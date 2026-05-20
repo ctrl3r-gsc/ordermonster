@@ -1,62 +1,78 @@
 [
   {
-    "name": "Ultimate Gummies Mango",
+    "name": "ULTIMATE GUMMIES MANGO 100mg THC",
     "dosage": 100,
+    "potency_type": "THC",
     "price": 80.00
   },
   {
-    "name": "Ultimate Gummies Green Apple",
+    "name": "ULTIMATE GUMMIES GREEN APPLE 250mg THC",
     "dosage": 250,
+    "potency_type": "THC",
     "price": 170.00
   },
   {
-    "name": "Ultimate Gummies Strawberry",
+    "name": "ULTIMATE GUMMIES STRAWBERRY 500mg THC",
     "dosage": 500,
+    "potency_type": "THC",
     "price": 270.00
   },
   {
-    "name": "X-Hash Gummies Pineapple",
+    "name": "X-HASH GUMMIES PINEAPPLE 150mg hash",
     "dosage": 150,
+    "potency_type": "hash",
     "price": 130.00
   },
   {
-    "name": "X-Hash Gummies Blackcurrant",
+    "name": "X-HASH GUMMIES BLACKCURRANT 350mg hash",
     "dosage": 350,
+    "potency_type": "hash",
     "price": 230.00
   },
   {
-    "name": "X-Hash Gummies Watermelon",
+    "name": "X-HASH GUMMIES WATERMELON 600mg hash",
     "dosage": 600,
+    "potency_type": "hash",
     "price": 330.00
   },
   {
-    "name": "Rosin Gummies Green Apple",
+    "name": "ROSIN GUMMIES GREEN APPLE 250mg rosin",
     "dosage": 250,
+    "potency_type": "rosin",
     "price": 300.00
   },
   {
-    "name": "Breakfast Cookies",
+    "name": "BREAKFAST COOKIES 100mg THC",
     "dosage": 100,
+    "potency_type": "THC",
     "price": 70.00
   },
   {
-    "name": "Brownie",
+    "name": "BROWNIE 100mg THC",
     "dosage": 100,
+    "potency_type": "THC",
     "price": 80.00
   },
   {
-    "name": "Cookies",
+    "name": "COOKIES 100mg THC",
     "dosage": 100,
+    "potency_type": "THC",
     "price": 80.00
   },
   {
-    "name": "Magic Gummies 1g",
+    "name": "MAGIC GUMMIES 1g",
     "dosage": 1000,
     "price": 200.00
   },
   {
-    "name": "Magic Gummies 2g",
+    "name": "MAGIC GUMMIES 2g",
     "dosage": 2000,
     "price": 400.00
+  },
+  {
+    "name": "HASH",
+    "dosage": null,
+    "potency_type": "hash",
+    "price": 0.00
   }
 ]

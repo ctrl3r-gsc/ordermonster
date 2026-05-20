@@ -13,33 +13,35 @@ from services.orders import sanitize_shop_name
 
 
 CatalogItem = Literal[
-    "Ultimate Gummies Mango 100mg",
-    "Ultimate Gummies Green Apple 250mg",
-    "Ultimate Gummies Strawberry 500mg",
-    "X-Hash Gummies Pineapple 150mg",
-    "X-Hash Gummies Blackcurrant 350mg",
-    "X-Hash Gummies Watermelon 600mg",
-    "Rosin Gummies Green Apple 250mg",
-    "Breakfast Cookies 100mg",
-    "Brownie 100mg",
-    "Cookies 100mg",
-    "Magic Gummies 1g 1000mg",
-    "Magic Gummies 2g 2000mg",
+    "ULTIMATE GUMMIES MANGO 100mg THC",
+    "ULTIMATE GUMMIES GREEN APPLE 250mg THC",
+    "ULTIMATE GUMMIES STRAWBERRY 500mg THC",
+    "X-HASH GUMMIES PINEAPPLE 150mg hash",
+    "X-HASH GUMMIES BLACKCURRANT 350mg hash",
+    "X-HASH GUMMIES WATERMELON 600mg hash",
+    "ROSIN GUMMIES GREEN APPLE 250mg rosin",
+    "BREAKFAST COOKIES 100mg THC",
+    "BROWNIE 100mg THC",
+    "COOKIES 100mg THC",
+    "MAGIC GUMMIES 1g",
+    "MAGIC GUMMIES 2g",
+    "HASH",
 ]
 
-CATALOG_ITEM_DETAILS: dict[str, tuple[str, int]] = {
-    "Ultimate Gummies Mango 100mg": ("Ultimate Gummies Mango", 100),
-    "Ultimate Gummies Green Apple 250mg": ("Ultimate Gummies Green Apple", 250),
-    "Ultimate Gummies Strawberry 500mg": ("Ultimate Gummies Strawberry", 500),
-    "X-Hash Gummies Pineapple 150mg": ("X-Hash Gummies Pineapple", 150),
-    "X-Hash Gummies Blackcurrant 350mg": ("X-Hash Gummies Blackcurrant", 350),
-    "X-Hash Gummies Watermelon 600mg": ("X-Hash Gummies Watermelon", 600),
-    "Rosin Gummies Green Apple 250mg": ("Rosin Gummies Green Apple", 250),
-    "Breakfast Cookies 100mg": ("Breakfast Cookies", 100),
-    "Brownie 100mg": ("Brownie", 100),
-    "Cookies 100mg": ("Cookies", 100),
-    "Magic Gummies 1g 1000mg": ("Magic Gummies 1g", 1000),
-    "Magic Gummies 2g 2000mg": ("Magic Gummies 2g", 2000),
+CATALOG_ITEM_DETAILS: dict[str, tuple[str, int | None]] = {
+    "ULTIMATE GUMMIES MANGO 100mg THC": ("ULTIMATE GUMMIES MANGO 100mg THC", 100),
+    "ULTIMATE GUMMIES GREEN APPLE 250mg THC": ("ULTIMATE GUMMIES GREEN APPLE 250mg THC", 250),
+    "ULTIMATE GUMMIES STRAWBERRY 500mg THC": ("ULTIMATE GUMMIES STRAWBERRY 500mg THC", 500),
+    "X-HASH GUMMIES PINEAPPLE 150mg hash": ("X-HASH GUMMIES PINEAPPLE 150mg hash", 150),
+    "X-HASH GUMMIES BLACKCURRANT 350mg hash": ("X-HASH GUMMIES BLACKCURRANT 350mg hash", 350),
+    "X-HASH GUMMIES WATERMELON 600mg hash": ("X-HASH GUMMIES WATERMELON 600mg hash", 600),
+    "ROSIN GUMMIES GREEN APPLE 250mg rosin": ("ROSIN GUMMIES GREEN APPLE 250mg rosin", 250),
+    "BREAKFAST COOKIES 100mg THC": ("BREAKFAST COOKIES 100mg THC", 100),
+    "BROWNIE 100mg THC": ("BROWNIE 100mg THC", 100),
+    "COOKIES 100mg THC": ("COOKIES 100mg THC", 100),
+    "MAGIC GUMMIES 1g": ("MAGIC GUMMIES 1g", 1000),
+    "MAGIC GUMMIES 2g": ("MAGIC GUMMIES 2g", 2000),
+    "HASH": ("HASH", None),
 }
 
 
@@ -97,22 +99,23 @@ SYSTEM_INSTRUCTION = (
     "4. `items`: Extract every single ordered product into this array.\n"
     "   - `product_name`: Map to an exact product from the database catalog below, not a broad category.\n"
     "     AVAILABLE DATABASE CATALOG PRODUCTS:\n"
-    "     1. Ultimate Gummies Mango 100mg\n"
-    "     2. Ultimate Gummies Green Apple 250mg\n"
-    "     3. Ultimate Gummies Strawberry 500mg\n"
-    "     4. X-Hash Gummies Pineapple 150mg\n"
-    "     5. X-Hash Gummies Blackcurrant 350mg\n"
-    "     6. X-Hash Gummies Watermelon 600mg\n"
-    "     7. Rosin Gummies Green Apple 250mg\n"
-    "     8. Breakfast Cookies 100mg\n"
-    "     9. Brownie 100mg\n"
-    "     10. Cookies 100mg\n"
-    "     11. Magic Gummies 1g 1000mg\n"
-    "     12. Magic Gummies 2g 2000mg\n"
+    "     1. ULTIMATE GUMMIES MANGO 100mg THC\n"
+    "     2. ULTIMATE GUMMIES GREEN APPLE 250mg THC\n"
+    "     3. ULTIMATE GUMMIES STRAWBERRY 500mg THC\n"
+    "     4. X-HASH GUMMIES PINEAPPLE 150mg hash\n"
+    "     5. X-HASH GUMMIES BLACKCURRANT 350mg hash\n"
+    "     6. X-HASH GUMMIES WATERMELON 600mg hash\n"
+    "     7. ROSIN GUMMIES GREEN APPLE 250mg rosin\n"
+    "     8. BREAKFAST COOKIES 100mg THC\n"
+    "     9. BROWNIE 100mg THC\n"
+    "     10. COOKIES 100mg THC\n"
+    "     11. MAGIC GUMMIES 1g\n"
+    "     12. MAGIC GUMMIES 2g\n"
+    "     13. HASH\n"
     "     You MUST map the user's requested item to one of these exact catalog items. Pay strict attention to the brand (for example X-Hash vs Ultimate vs Rosin vs Magic) and the flavor (for example Watermelon vs Mango vs Strawberry vs Green Apple). Do not hallucinate or guess items that are not on this list.\n"
     "     You must classify the user's item strictly into one of the allowed Enum/Literal values. Use brand and flavor context to make the best match, even if the user forgets the exact dosage.\n"
     "     STRICT DOSAGE PRIORITY: When mapping items to the allowed Enum catalog, DOSAGE (e.g., 150mg, 100mg, 500mg) is the HIGHEST priority matching criteria. If the user explicitly writes '150mg', you MUST select the catalog item that matches '150mg'. NEVER substitute a different dosage if the correct dosage exists in the catalog.\n"
-    "     In JSON, `product_name` MUST be one exact full catalog label from the schema, including dosage. Example: 'x-hash watermelon gummies' -> {\"product_name\": \"X-Hash Gummies Watermelon 600mg\", \"dosage\": 600, \"flavor\": \"watermelon\"}.\n"
+    "     In JSON, `product_name` MUST be one exact full catalog label from the schema, including dosage. Example: 'x-hash watermelon gummies' -> {\"product_name\": \"X-HASH GUMMIES WATERMELON 600mg hash\", \"dosage\": 600, \"flavor\": \"watermelon\"}.\n"
     "     If the user mentions a brand/flavor but omits the dosage (mg), map it to the most logical matching item in the provided catalog based on the brand and flavor they DID specify, but NEVER change the flavor or brand just to find a match.\n"
     "     Users will make typos when writing product names (e.g., 'guumies' instead of 'gummies'). "
     "You must logically map these typos to the correct exact catalog product when the brand/flavor/dosage evidence points to one.\n"
@@ -129,7 +132,7 @@ SYSTEM_INSTRUCTION = (
     "{\n"
     "  \"shop_name\": \"ШАМАН\",\n"
     "  \"items\": [\n"
-    "    {\"product_name\": \"Ultimate Gummies Strawberry\", \"dosage\": 500, \"flavor\": \"клубника\", \"quantity\": 10, \"is_gift\": false}\n"
+    "    {\"product_name\": \"ULTIMATE GUMMIES STRAWBERRY 500mg THC\", \"dosage\": 500, \"flavor\": \"клубника\", \"quantity\": 10, \"is_gift\": false}\n"
     "  ],\n"
     "  \"suggested_payment_method\": \"cash\",\n"
     "  \"total_amount\": null\n"
@@ -139,8 +142,8 @@ SYSTEM_INSTRUCTION = (
     "{\n"
     "  \"shop_name\": \"TAI MA TON\",\n"
     "  \"items\": [\n"
-    "    {\"product_name\": \"Brownie\", \"dosage\": 100, \"flavor\": null, \"quantity\": 30, \"is_gift\": false},\n"
-    "    {\"product_name\": \"Brownie\", \"dosage\": 500, \"flavor\": null, \"quantity\": 1, \"is_gift\": true}\n"
+    "    {\"product_name\": \"BROWNIE 100mg THC\", \"dosage\": 100, \"flavor\": null, \"quantity\": 30, \"is_gift\": false},\n"
+    "    {\"product_name\": \"BROWNIE 100mg THC\", \"dosage\": 100, \"flavor\": null, \"quantity\": 1, \"is_gift\": true}\n"
     "  ],\n"
     "  \"suggested_payment_method\": \"cash\",\n"
     "  \"total_amount\": 3000\n"
@@ -150,9 +153,9 @@ SYSTEM_INSTRUCTION = (
     "{\n"
     "  \"shop_name\": \"TESTSHOP\",\n"
     "  \"items\": [\n"
-    "    {\"product_name\": \"Ultimate Gummies Green Apple\", \"dosage\": 250, \"flavor\": null, \"quantity\": 5, \"is_gift\": false},\n"
-    "    {\"product_name\": \"Ultimate Gummies Strawberry\", \"dosage\": 500, \"flavor\": null, \"quantity\": 15, \"is_gift\": false},\n"
-    "    {\"product_name\": \"Brownie\", \"dosage\": 100, \"flavor\": null, \"quantity\": 20, \"is_gift\": false}\n"
+    "    {\"product_name\": \"ULTIMATE GUMMIES GREEN APPLE 250mg THC\", \"dosage\": 250, \"flavor\": null, \"quantity\": 5, \"is_gift\": false},\n"
+    "    {\"product_name\": \"ULTIMATE GUMMIES STRAWBERRY 500mg THC\", \"dosage\": 500, \"flavor\": null, \"quantity\": 15, \"is_gift\": false},\n"
+    "    {\"product_name\": \"BROWNIE 100mg THC\", \"dosage\": 100, \"flavor\": null, \"quantity\": 20, \"is_gift\": false}\n"
     "  ],\n"
     "  \"suggested_payment_method\": null,\n"
     "  \"total_amount\": null\n"
@@ -163,9 +166,9 @@ SYSTEM_INSTRUCTION = (
     "{\n"
     "  \"shop_name\": null,\n"
     "  \"items\": [\n"
-    "    {\"product_name\": \"Ultimate Gummies Strawberry\", \"dosage\": 500, \"flavor\": null, \"quantity\": 30, \"is_gift\": false},\n"
-    "    {\"product_name\": \"Brownie\", \"dosage\": 100, \"flavor\": null, \"quantity\": 15, \"is_gift\": false},\n"
-    "    {\"product_name\": \"Ultimate Gummies Mango\", \"dosage\": 100, \"flavor\": null, \"quantity\": 30, \"is_gift\": false}\n"
+    "    {\"product_name\": \"ULTIMATE GUMMIES STRAWBERRY 500mg THC\", \"dosage\": 500, \"flavor\": null, \"quantity\": 30, \"is_gift\": false},\n"
+    "    {\"product_name\": \"BROWNIE 100mg THC\", \"dosage\": 100, \"flavor\": null, \"quantity\": 15, \"is_gift\": false},\n"
+    "    {\"product_name\": \"ULTIMATE GUMMIES MANGO 100mg THC\", \"dosage\": 100, \"flavor\": null, \"quantity\": 30, \"is_gift\": false}\n"
     "  ],\n"
     "  \"suggested_payment_method\": null,\n"
     "  \"total_amount\": null\n"
@@ -177,6 +180,11 @@ PRODUCT_ALIASES = {
     "magic gummies": "Magic Gummies",
     "magic gummy": "Magic Gummies",
     "magic": "Magic Gummies",
+    "x-hash gummies": "X-Hash Gummies",
+    "x hash gummies": "X-Hash Gummies",
+    "x-hash": "X-Hash Gummies",
+    "x hash": "X-Hash Gummies",
+    "hash": "Hash",
     "guumies": "Gummies",
     "gumies": "Gummies",
     "gummys": "Gummies",
@@ -389,32 +397,40 @@ def _catalog_label_for_item(product_name: str, dosage: int | None, flavor: str |
     search = f"{low_name} {low_flavor}"
 
     if "magic" in search:
-        return "Magic Gummies 2g 2000mg" if dosage == 2000 or "2g" in search else "Magic Gummies 1g 1000mg"
+        return "MAGIC GUMMIES 2g" if dosage == 2000 or "2g" in search else "MAGIC GUMMIES 1g"
     if "breakfast" in search:
-        return "Breakfast Cookies 100mg"
+        return "BREAKFAST COOKIES 100mg THC"
     if "brownie" in search or "брауни" in search:
-        return "Brownie 100mg"
+        return "BROWNIE 100mg THC"
     if "cookie" in search or "печенье" in search:
-        return "Cookies 100mg"
+        return "COOKIES 100mg THC"
     if "x-hash" in search or "x hash" in search:
         if "watermelon" in search or dosage == 600:
-            return "X-Hash Gummies Watermelon 600mg"
+            return "X-HASH GUMMIES WATERMELON 600mg hash"
         if "blackcurrant" in search or "black currant" in search or dosage == 350:
-            return "X-Hash Gummies Blackcurrant 350mg"
-        return "X-Hash Gummies Pineapple 150mg"
+            return "X-HASH GUMMIES BLACKCURRANT 350mg hash"
+        return "X-HASH GUMMIES PINEAPPLE 150mg hash"
+    if "hash" in search and "gumm" not in search:
+        return "HASH"
     if "rosin" in search:
-        return "Rosin Gummies Green Apple 250mg"
+        return "ROSIN GUMMIES GREEN APPLE 250mg rosin"
     if "watermelon" in search:
-        return "X-Hash Gummies Watermelon 600mg"
+        return "X-HASH GUMMIES WATERMELON 600mg hash"
     if "pineapple" in search:
-        return "X-Hash Gummies Pineapple 150mg"
+        return "X-HASH GUMMIES PINEAPPLE 150mg hash"
     if "blackcurrant" in search or "black currant" in search:
-        return "X-Hash Gummies Blackcurrant 350mg"
+        return "X-HASH GUMMIES BLACKCURRANT 350mg hash"
+    if dosage == 150:
+        return "X-HASH GUMMIES PINEAPPLE 150mg hash"
+    if dosage == 350:
+        return "X-HASH GUMMIES BLACKCURRANT 350mg hash"
+    if dosage == 600:
+        return "X-HASH GUMMIES WATERMELON 600mg hash"
     if "strawberry" in search or "клубник" in search or dosage == 500:
-        return "Ultimate Gummies Strawberry 500mg"
+        return "ULTIMATE GUMMIES STRAWBERRY 500mg THC"
     if "green apple" in search or "яблок" in search or dosage == 250:
-        return "Ultimate Gummies Green Apple 250mg"
-    return "Ultimate Gummies Mango 100mg"
+        return "ULTIMATE GUMMIES GREEN APPLE 250mg THC"
+    return "ULTIMATE GUMMIES MANGO 100mg THC"
 
 
 def _normalize_catalog_item(item: OrderItem) -> None:

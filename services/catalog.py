@@ -10,7 +10,7 @@ from services.orders import make_sku
 
 
 DEFAULT_CATALOG_PATH = Path("data/current_products.json")
-EXPECTED_CATALOG_SIZE = 12
+EXPECTED_CATALOG_SIZE = 13
 REQUIRED_CATALOG_FIELDS = {"name", "dosage", "price"}
 
 
