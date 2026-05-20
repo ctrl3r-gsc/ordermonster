@@ -307,11 +307,16 @@ async def shop_from_parsed(session: AsyncSession, parsed: dict, fallback_shop: S
 
 
 async def create_order_from_parsed(session: AsyncSession, parsed: dict, shop: Shop, user_id: int) -> Order:
-    raw_address = parsed.get("address") or ""
-    extracted_phone = parsed.get("phone_number") or ""
-    clean_address = raw_address.replace(extracted_phone, "").strip()
-    if extracted_phone:
-        parsed = {**parsed, "address": clean_address}
+    order_data = dict(parsed)
+    extracted_phone = order_data.get("phone_number")
+    raw_address = order_data.get("address")
+    if extracted_phone and raw_address:
+        # Remove all instances of the phone number from the address string.
+        # Also remove any dangling newlines or extra spaces.
+        clean_address = raw_address.replace(extracted_phone, "").strip()
+        # Clean up any potential double newlines or artifacts left behind.
+        order_data["address"] = clean_address.replace("\n\n", "\n").strip()
+    parsed = order_data
     shop = await shop_from_parsed(session, parsed, fallback_shop=shop)
     await backfill_missing_order_display_numbers(session)
     order = Order(
