@@ -119,6 +119,24 @@ def clean_contact_value(value: str | None) -> str | None:
     return clean
 
 
+def sanitize_shop_input(raw_name, raw_address):
+    # 1. Remove any HTTP/HTTPS links from the name.
+    clean_name = re.sub(r"https?://\S+", "", raw_name or "").replace("HTTPS", "").replace("HTTP", "").strip()
+
+    # 2. If the address contains map links or empty placeholders, clear it.
+    if (
+        not raw_address
+        or "googleusercontent" in raw_address
+        or "maps.app" in raw_address
+        or "google.com" in raw_address
+    ):
+        clean_address = "Address not found"
+    else:
+        clean_address = raw_address.strip()
+
+    return clean_name, clean_address
+
+
 def strip_phone_from_address(address: str | None, phone_number: str | None) -> str | None:
     clean_address = clean_contact_value(address)
     clean_phone = clean_contact_value(phone_number)
@@ -152,6 +170,7 @@ def sterilize_address(raw_address, phone_number):
 
 
 async def get_or_create_shop(session: AsyncSession, name: str, address: str | None = None, phone_number: str | None = None) -> Shop:
+    name, address = sanitize_shop_input(name, address)
     clean_name = (name or "").upper().strip()
     clean_name = sanitize_shop_name(clean_name)
     if not clean_name:
@@ -311,6 +330,7 @@ def parsed_shop_contact(parsed: dict) -> tuple[str | None, str | None]:
 async def shop_from_parsed(session: AsyncSession, parsed: dict, fallback_shop: Shop | None = None) -> Shop:
     shop_name = (parsed.get("shop_name") or "").upper().strip()
     address, phone_number = parsed_shop_contact(parsed)
+    shop_name, address = sanitize_shop_input(shop_name, address)
     if shop_name:
         return await get_or_create_shop(session, shop_name, address=address, phone_number=phone_number)
     if fallback_shop is None:

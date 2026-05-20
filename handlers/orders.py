@@ -26,6 +26,7 @@ from services.orders import (
     item_unit_price,
     match_existing_shop_name,
     paid_amount,
+    sanitize_shop_input,
     set_order_payment_status,
     update_item_unit_price,
     remaining_amount,
@@ -436,7 +437,8 @@ async def add_address(callback: CallbackQuery, state: FSMContext) -> None:
 async def enter_added_address(message: Message, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
     order = await get_order(session, int(data["order_id"]))
-    order.shop.address = message.text.strip()
+    _, clean_address = sanitize_shop_input(order.shop.name, message.text)
+    order.shop.address = clean_address
     await session.commit()
     order = await get_order(session, order.id)
     await state.clear()
