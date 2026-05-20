@@ -163,20 +163,19 @@ def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardM
     is_delivered = order.delivery_status == DeliveryStatus.delivered if order else delivered
     rows = [[InlineKeyboardButton(text="🔄 Change Payment Status", callback_data=f"pay_status:{order_id}")]]
     if not is_delivered:
-        rows.append([InlineKeyboardButton(text="Edit Delivery", callback_data=f"del:{order_id}")])
-    rows.append([InlineKeyboardButton(text="Edit Prices", callback_data=f"pr:{order_id}")])
+        rows.append([InlineKeyboardButton(text="✏️ Edit Delivery", callback_data=f"del:{order_id}")])
+    rows.append([InlineKeyboardButton(text="💵 Edit Prices", callback_data=f"pr:{order_id}")])
     if order:
         missing_row = []
         if not order.shop.address:
             missing_row.append(InlineKeyboardButton(text="📍 Add Address", callback_data=f"add_addr:{order_id}"))
         if not order.shop.phone_number:
-            missing_row.append(InlineKeyboardButton(text="📱 Add Phone", callback_data=f"add_phone:{order_id}"))
+            missing_row.append(InlineKeyboardButton(text="📞 Add Phone", callback_data=f"add_phone:{order_id}"))
         if missing_row:
             rows.append(missing_row)
-    rows.append([InlineKeyboardButton(text="Dashboard", callback_data="dash")])
+    rows.append([InlineKeyboardButton(text="📊 Dashboard", callback_data="dash")])
     rows.append([InlineKeyboardButton(text="🗑 Delete Order", callback_data=f"delete_order:{order_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
 def draft_order_card_text(parsed: dict) -> str:
     lines = [
         "📦 <b>Draft Order</b>",
@@ -233,8 +232,6 @@ def payment_status_keyboard(order_id: int) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Back", callback_data=f"ord:{order_id}")],
         ]
     )
-
-
 def method_keyboard(order_id: int, mode: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -361,6 +358,8 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
     await state.set_data({"parsed": parsed})
     shop_name = (parsed.get("shop_name") or "").upper().strip()
     shop_name = sanitize_shop_name(shop_name)
+    shop_name, parsed["address"] = sanitize_shop_input(shop_name, parsed.get("address"), parsed.get("phone_number"))
+    shop_name = sanitize_shop_name(shop_name)
     if shop_name:
         parsed["shop_name"] = shop_name
         matched_shop = match_existing_shop_name(shop_name, shops)
@@ -409,6 +408,8 @@ async def set_draft_shop(message: Message, state: FSMContext, session: AsyncSess
         await state.clear()
         return
     shop_name = sanitize_shop_name((message.text or "").upper().strip())
+    shop_name, parsed["address"] = sanitize_shop_input(shop_name, parsed.get("address"), parsed.get("phone_number"))
+    shop_name = sanitize_shop_name(shop_name)
     if not shop_name:
         await respond_to_message(message, "Type a valid shop name.")
         return

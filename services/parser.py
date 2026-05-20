@@ -447,6 +447,8 @@ def _normalize_extracted_order(order: ExtractedOrder) -> ExtractedOrder:
 
 
 def _extract_inline_shop_name(text: str) -> str | None:
+    text = re.sub(r"https?://\S+|(?:maps\.app\.goo\.gl|goo\.gl|google\.com/maps)/?\S*", " ", text, flags=re.I)
+    text = re.sub(r"\d{9,11}", " ", text)
     patterns = [
         r"(?:\bв|для|to|for)\s+([a-zA-Zа-яА-Я0-9 ._-]{2,40}?)(?:[,.;]|\s+(?:оплата|paid|налик|наличные|перевод|карта|банк|total|итого)|$)",
         r"(?:shop|client|клиент|магазин)\s*:?\s*([a-zA-Zа-яА-Я0-9 ._-]{2,40})(?:[,.;]|\n|$)",
@@ -470,6 +472,9 @@ def _extract_phone_number(text: str) -> str | None:
     phone_match = re.search(thai_phone_pattern, text)
     if phone_match:
         return re.sub(r"\s+", " ", phone_match.group(0)).strip(" .,-")
+    generic_match = re.search(r"\b\d{9,11}\b", text)
+    if generic_match:
+        return generic_match.group(0)
     return None
 
 
@@ -623,7 +628,10 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
             tail,
             flags=re.I,
         ).strip(" ,.;:-")
+        tail = re.sub(r"https?://\S+|(?:maps\.app\.goo\.gl|goo\.gl|google\.com/maps)/?\S*", " ", tail, flags=re.I)
+        tail = re.sub(r"\d{9,11}", " ", tail)
         tail = re.sub(r"^(?:for|to)\s+(?:shop\s+)?", "", tail, flags=re.I).strip(" ,.;:-")
+        tail = re.sub(r"\s+", " ", tail).strip(" ,.;:-")
         if tail and not any(alias in tail.lower() for alias in PRODUCT_ALIASES):
             trailing_shop = tail
     return items, trailing_shop
