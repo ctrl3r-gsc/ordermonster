@@ -37,7 +37,8 @@ EMOJI_RE = re.compile(
 )
 SHOP_SPECIAL_CHARS_RE = re.compile(r"[^\w\s&.'’]", flags=re.UNICODE)
 def make_sku(name: str, dosage: int | None, flavor: str | None) -> str:
-    raw = "-".join(str(part) for part in (name, dosage or "na", flavor or "plain"))
+    dosage_part = "na" if dosage is None else (f"{dosage // 1000}g" if dosage >= 1000 and dosage % 1000 == 0 else f"{dosage}mg")
+    raw = "-".join(str(part) for part in (name, flavor, dosage_part) if part)
     sku = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
     return sku[:250] or "unknown"
 
@@ -380,22 +381,16 @@ async def create_order_from_parsed(session: AsyncSession, parsed: dict, shop: Sh
     for item in parsed.get("items", []):
         quantity = int(item.get("quantity") or 1)
         is_gift = bool(item.get("is_gift"))
-        parsed_product_name = item.get("product_name") or "unknown"
-        product = await find_product_for_item(
-            session, parsed_product_name, item.get("dosage"), item.get("flavor")
-        )
-        product_missing = product is None
-        if product is None:
-            product = await get_or_create_product(
-                session,
-                f"UNKNOWN: {parsed_product_name}",
-                item.get("dosage"),
-                item.get("flavor"),
-                price=Decimal("0.00"),
-                is_active=False,
-                force_update=False,
+        product_id = item.get("product_id")
+        product = await session.get(Product, int(product_id)) if product_id else None
+        if product is None or not product.is_active:
+            parsed_product_name = item.get("product_name") or item.get("raw_product_text") or "unknown"
+            product = await find_product_for_item(
+                session, parsed_product_name, item.get("dosage"), item.get("flavor")
             )
-        unit_price = Decimal("0.00") if product_missing else calculated_unit_price(product, shop, is_gift)
+        if product is None or not product.is_active:
+            raise ValueError("Order item does not reference an active catalog product")
+        unit_price = calculated_unit_price(product, shop, is_gift)
         if not is_gift:
             calculated_total += Decimal(quantity) * unit_price
         session.add(

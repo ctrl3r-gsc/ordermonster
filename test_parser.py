@@ -1,5 +1,7 @@
 import asyncio
+import json
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 # Убедись, что папка называется services и файл внутри неё parser.py
 from services.parser import parse_order_text  
@@ -16,7 +18,18 @@ async def test():
     print("Отправка запроса в Google AI Studio...")
     
     try:
-        result = await parse_order_text(raw_text)
+        raw_catalog = json.loads(Path("data/current_products.json").read_text(encoding="utf-8"))
+        catalog = [
+            {
+                "product_id": index,
+                "name": item["name"],
+                "dosage": item.get("dosage"),
+                "price": item.get("price"),
+                "aliases": item.get("aliases", []),
+            }
+            for index, item in enumerate(raw_catalog, start=1)
+        ]
+        result = await parse_order_text(raw_text, catalog_products=catalog)
         print("\n✅ Успех! Результат парсинга от Gemini:")
         print(result)
     except Exception as e:

@@ -11,6 +11,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import DeliveryStatus, Order
+from services.catalog import active_catalog, all_catalog, catalog_for_parser
 from services.orders import (
     add_payment,
     all_shops,
@@ -72,6 +73,7 @@ def looks_like_order_text(text: str | None) -> bool:
 
 class OrderFlow(StatesGroup):
     setting_shop = State()
+    selecting_product = State()
     adding_address = State()
     adding_phone = State()
     entering_split_amount = State()
@@ -202,6 +204,33 @@ def draft_order_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def product_choice_keyboard(products, product_ids: list[int]) -> InlineKeyboardMarkup:
+    by_id = {product.id: product for product in products}
+    rows = []
+    for product_id in product_ids:
+        product = by_id.get(int(product_id))
+        if not product:
+            continue
+        rows.append([InlineKeyboardButton(text=product.name[:60], callback_data=f"pick_product:{product.id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def ask_product_clarification(message: Message, state: FSMContext, parsed: dict, products) -> bool:
+    unresolved = parsed.get("unresolved_products") or []
+    if not unresolved:
+        return False
+    first = unresolved[0]
+    similar_ids = first.get("similar_product_ids") or [product.id for product in products[:6]]
+    await state.set_state(OrderFlow.selecting_product)
+    await state.update_data(parsed=parsed)
+    await respond_to_message(
+        message,
+        "Какой именно товар ты имел в виду?",
+        reply_markup=product_choice_keyboard(products, similar_ids),
+    )
+    return True
+
+
 def delete_confirmation_keyboard(order_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -300,11 +329,17 @@ def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineK
     if pagination_row:
         rows.append(pagination_row)
     rows.append([InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")])
+    rows.append([InlineKeyboardButton(text="Products", callback_data="catalog:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def dashboard_empty_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")]])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")],
+            [InlineKeyboardButton(text="Products", callback_data="catalog:list")],
+        ]
+    )
 
 
 @router.message(Command("start"), F.chat.type.in_(ORDER_CHAT_TYPES))
@@ -328,6 +363,33 @@ async def dashboard_cb(callback: CallbackQuery, session: AsyncSession) -> None:
     await callback.answer()
 
 
+def catalog_text(products) -> str:
+    lines = ["<b>Products Catalog</b>"]
+    for product in products:
+        aliases = ", ".join(alias.alias for alias in product.aliases if alias.is_active) or "-"
+        active = "active" if product.is_active else "inactive"
+        lines.append(
+            f"\n<b>{escape(product.name)}</b>\n"
+            f"Price: {money(product.price)} THB | {active}\n"
+            f"SKU: <code>{escape(product.sku)}</code>\n"
+            f"Aliases: {escape(aliases)}"
+        )
+    return "\n".join(lines)
+
+
+@router.message(Command("catalog"), F.chat.type.in_(ORDER_CHAT_TYPES))
+async def catalog_cmd(message: Message, session: AsyncSession) -> None:
+    products = await all_catalog(session)
+    await respond_to_message(message, catalog_text(products), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "catalog:list")
+async def catalog_cb(callback: CallbackQuery, session: AsyncSession) -> None:
+    products = await all_catalog(session)
+    await callback.message.edit_text(catalog_text(products), parse_mode="HTML")
+    await callback.answer()
+
+
 @router.message(StateFilter(None), F.text, ~F.text.startswith("/"), F.chat.type.in_(ORDER_CHAT_TYPES))
 async def parse_new_order(message: Message, state: FSMContext, session: AsyncSession) -> None:
     await process_order_text(message, state, session)
@@ -336,10 +398,13 @@ async def parse_new_order(message: Message, state: FSMContext, session: AsyncSes
 async def process_order_text(message: Message, state: FSMContext, session: AsyncSession) -> None:
     await state.clear()
     shops = await all_shops(session)
-    parsed = await parse_order_text(message.text, [shop.name for shop in shops])
+    products = await active_catalog(session)
+    parsed = await parse_order_text(message.text, [shop.name for shop in shops], catalog_for_parser(products))
     if not parsed.get("items"):
         await state.clear()
         await respond_to_message(message, "I could not find order items in that message.")
+        return
+    if await ask_product_clarification(message, state, parsed, products):
         return
     await state.set_data({"parsed": parsed})
     shop_name = (parsed.get("shop_name") or "").upper().strip()
@@ -372,6 +437,51 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
         reply_markup=draft_order_keyboard(),
         parse_mode="HTML",
     )
+
+
+@router.callback_query(OrderFlow.selecting_product, F.data.startswith("pick_product:"))
+async def pick_product(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    product_id = int(callback.data.split(":")[1])
+    product = next((item for item in await active_catalog(session) if item.id == product_id), None)
+    if product is None:
+        await callback.answer("Product is not active.", show_alert=True)
+        return
+    data = await state.get_data()
+    parsed = data.get("parsed")
+    if not parsed:
+        await callback.answer("Order draft expired. Send the order again.", show_alert=True)
+        return
+    for item in parsed.get("items", []):
+        if not item.get("product_id"):
+            item["product_id"] = product.id
+            item["product_name"] = product.name
+            item["dosage"] = product.dosage
+            item["flavor"] = product.flavor
+            break
+    parsed["unresolved_products"] = []
+    shops = await all_shops(session)
+    shop_name = sanitize_shop_name((parsed.get("shop_name") or "").upper().strip())
+    shop_name, parsed["address"] = sanitize_shop_input(shop_name, parsed.get("address"), parsed.get("phone_number"))
+    shop_name = sanitize_shop_name(shop_name)
+    if not shop_name:
+        await state.set_data({"parsed": parsed})
+        await state.set_state(None)
+        await callback.message.edit_text(
+            draft_order_card_text(parsed),
+            reply_markup=draft_order_keyboard(),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+    parsed["shop_name"] = shop_name
+    matched_shop = match_existing_shop_name(shop_name, shops)
+    shop = matched_shop or await get_or_create_shop(session, shop_name, parsed.get("address"), parsed.get("phone_number"))
+    if matched_shop:
+        parsed["shop_name"] = matched_shop.name
+    order = await create_order_from_parsed(session, parsed, shop, callback.from_user.id)
+    await state.clear()
+    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
+    await callback.answer()
 
 
 @router.callback_query(F.data == "draft:set_shop")

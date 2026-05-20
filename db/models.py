@@ -55,6 +55,19 @@ class Product(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     items: Mapped[list["OrderItem"]] = relationship(back_populates="product")
+    aliases: Mapped[list["ProductAlias"]] = relationship(back_populates="product", cascade="all, delete-orphan")
+
+
+class ProductAlias(Base):
+    __tablename__ = "product_aliases"
+    __table_args__ = (UniqueConstraint("product_id", "alias", name="uq_product_aliases_product_alias"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
+    alias: Mapped[str] = mapped_column(String(255), index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    product: Mapped[Product] = relationship(back_populates="aliases")
 
 
 class Order(Base):

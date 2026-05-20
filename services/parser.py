@@ -46,7 +46,9 @@ CATALOG_ITEM_DETAILS: dict[str, tuple[str, int | None]] = {
 
 
 class OrderItem(BaseModel):
-    product_name: CatalogItem
+    product_id: int | None = None
+    product_name: str | None = None
+    raw_product_text: str | None = None
     dosage: int | None = None
     flavor: str | None = None
     quantity: int = Field(ge=1)
@@ -71,10 +73,144 @@ class ExtractedOrder(BaseModel):
     items: list[OrderItem] = Field(default_factory=list)
     suggested_payment_method: Literal["cash", "transaction", "crypto"] | None = None
     total_amount: float | None = None
+    unresolved_products: list[dict] = Field(default_factory=list)
 
 
 ExtractedOrderItem = OrderItem
 OrderExtractionModel = ExtractedOrder
+
+
+def _normalize_match_text(value: str | None) -> str:
+    value = (value or "").lower()
+    value = re.sub(r"(\d+)\s*(mg|мг)", r"\1mg", value)
+    value = re.sub(r"(\d+)\s*(g|гр|г)\b", r"\1g", value)
+    value = value.replace("black currant", "blackcurrant")
+    return re.sub(r"[^a-z0-9а-яё]+", " ", value).strip()
+
+
+def _catalog_prompt(catalog_products: list[dict] | None) -> str:
+    if not catalog_products:
+        return ""
+    lines = ["\nACTIVE PRODUCTS. You may only choose product_id from this list:"]
+    for product in catalog_products:
+        aliases = ", ".join(product.get("aliases") or [])
+        lines.append(
+            f"- product_id={product['product_id']}; name={product['name']}; "
+            f"dosage={product.get('dosage')}; price={product.get('price')}; aliases=[{aliases}]"
+        )
+    lines.append(
+        "For every parsed item return product_id from the list. If no listed product fits, set product_id to null. "
+        "Never invent products, prices, ids, or aliases."
+    )
+    return "\n".join(lines)
+
+
+def _catalog_by_id(catalog_products: list[dict] | None) -> dict[int, dict]:
+    return {int(product["product_id"]): product for product in catalog_products or [] if product.get("product_id") is not None}
+
+
+def _item_search_text(item: OrderItem, raw_text: str) -> str:
+    bits = [item.raw_product_text, item.product_name, item.flavor, raw_text]
+    if item.dosage:
+        bits.append(f"{item.dosage}mg")
+    if not any(bits):
+        bits.append(raw_text)
+    return " ".join(str(bit) for bit in bits if bit)
+
+
+def _candidate_strings(product: dict) -> list[str]:
+    dosage = product.get("dosage")
+    dosage_bits = []
+    if dosage is not None:
+        dosage_bits = [f"{dosage}", f"{dosage}mg"]
+        if int(dosage) >= 1000 and int(dosage) % 1000 == 0:
+            dosage_bits.append(f"{int(dosage) // 1000}g")
+    values = [product.get("name", ""), *(product.get("aliases") or [])]
+    return [f"{value} {' '.join(dosage_bits)}" for value in values if value]
+
+
+def _extract_dosages(text: str) -> set[int]:
+    values: set[int] = set()
+    for match in re.finditer(r"(\d+(?:[\.,]\d+)?)\s*(mg|мг|g|гр|г)\b", text.lower(), flags=re.I):
+        amount = float(match.group(1).replace(",", "."))
+        unit = match.group(2).lower()
+        values.add(int(amount * 1000) if unit in {"g", "гр", "г"} else int(amount))
+    for match in re.finditer(r"\b(100|150|250|350|500|600)\b", text):
+        values.add(int(match.group(1)))
+    return values
+
+
+def _resolve_item_product(item: OrderItem, catalog_products: list[dict] | None, raw_text: str) -> tuple[OrderItem, list[int]]:
+    catalog = catalog_products or []
+    product_by_id = _catalog_by_id(catalog)
+    if item.product_id and item.product_id in product_by_id:
+        product = product_by_id[item.product_id]
+        item.product_name = product.get("name")
+        item.dosage = product.get("dosage")
+        return item, []
+
+    query = _normalize_match_text(_item_search_text(item, raw_text))
+    if not query:
+        return item, []
+
+    query_dosages = _extract_dosages(query)
+    scored: list[tuple[float, dict]] = []
+    for product in catalog:
+        best = 0.0
+        exact_alias = False
+        for candidate in _candidate_strings(product):
+            normalized_candidate = _normalize_match_text(candidate)
+            aliases = [_normalize_match_text(alias) for alias in product.get("aliases") or []]
+            if query in aliases or any(alias and alias in query for alias in aliases):
+                best = max(best, 1.0)
+                exact_alias = True
+            if normalized_candidate and normalized_candidate in query:
+                best = max(best, 0.95)
+            best = max(best, SequenceMatcher(None, query, normalized_candidate).ratio())
+        product_dosage = product.get("dosage")
+        if query_dosages and product_dosage in query_dosages:
+            best += 0.25
+        elif query_dosages and product_dosage is not None:
+            best -= 0.20
+        name_norm = _normalize_match_text(product.get("name"))
+        if "gummies" in query and "gummies" in name_norm:
+            best += 0.08
+        if "cookie" in query and "cookie" in name_norm:
+            best += 0.08
+        if "brownie" in query and "brownie" in name_norm:
+            best += 0.08
+        scored.append((best, product))
+
+    scored.sort(key=lambda row: row[0], reverse=True)
+    similar = [int(product["product_id"]) for score, product in scored[:5] if score >= 0.45]
+    if not scored:
+        return item, similar
+    best_score, best_product = scored[0]
+    second_score = scored[1][0] if len(scored) > 1 else 0
+    if best_score >= 0.86 and best_score - second_score >= 0.04:
+        item.product_id = int(best_product["product_id"])
+        item.product_name = best_product.get("name")
+        item.dosage = best_product.get("dosage")
+        return item, []
+    return item, similar
+
+
+def resolve_products_for_order(order: ExtractedOrder, catalog_products: list[dict] | None, raw_text: str) -> ExtractedOrder:
+    unresolved: list[dict] = []
+    for item in order.items:
+        resolved, similar = _resolve_item_product(item, catalog_products, raw_text)
+        if not resolved.product_id:
+            unresolved.append(
+                {
+                    "quantity": resolved.quantity,
+                    "raw_product_text": resolved.raw_product_text or resolved.product_name,
+                    "dosage": resolved.dosage,
+                    "similar_product_ids": similar,
+                }
+            )
+    if unresolved:
+        order.unresolved_products = unresolved
+    return order
 
 
 SYSTEM_INSTRUCTION = (
@@ -234,12 +370,13 @@ FLAVORS = [
 GIFT_WORDS = ("gift", "free", "bonus", "бонус", "подарок", "на пробу")
 
 
-def _build_system_instruction(existing_shops: list[str] | None = None) -> str:
+def _build_system_instruction(existing_shops: list[str] | None = None, catalog_products: list[dict] | None = None) -> str:
+    instruction = f"{SYSTEM_INSTRUCTION}{_catalog_prompt(catalog_products)}"
     if not existing_shops:
-        return SYSTEM_INSTRUCTION
+        return instruction
     shop_list = ", ".join(f"'{shop}'" for shop in existing_shops if shop)
     return (
-        f"{SYSTEM_INSTRUCTION}\n\n"
+        f"{instruction}\n\n"
         "VALID EXISTING SHOPS:\n"
         f"Here is a list of valid existing shops: {shop_list}. "
         "If the input text contains a misspelled, shorthand, or lowercase version of one of these shops "
@@ -434,7 +571,11 @@ def _catalog_label_for_item(product_name: str, dosage: int | None, flavor: str |
 
 
 def _normalize_catalog_item(item: OrderItem) -> None:
-    product_name = str(item.product_name)
+    if item.product_id:
+        return
+    product_name = str(item.product_name or "")
+    if product_name not in CATALOG_ITEM_DETAILS:
+        return
     db_name, catalog_dosage = CATALOG_ITEM_DETAILS[product_name]
     item.product_name = db_name
     item.dosage = catalog_dosage
@@ -594,6 +735,7 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
                 items.append(
                     OrderItem(
                         product_name=_catalog_label_for_item(product_name, dosage, flavor),
+                        raw_product_text=f"{alias} {segment}".strip(),
                         dosage=dosage,
                         flavor=flavor,
                         quantity=int(dosage_quantity.group(3)) if dosage_quantity.group(3) else prefix_quantity or 1,
@@ -603,19 +745,24 @@ def _parse_dense_inline_items(text: str) -> tuple[list[OrderItem], str | None]:
                 segment_consumed_until = max(segment_consumed_until, dosage_quantity.end())
         else:
             quantity_match = re.search(r"\b(\d+)\b", segment_low)
-            if quantity_match:
+            if quantity_match or prefix_quantity:
                 dosage = _default_dosage(product_name, None)
+                if prefix_quantity and quantity_match:
+                    bare_value = int(quantity_match.group(1))
+                    if bare_value in {100, 150, 250, 350, 500, 600, 1000, 2000}:
+                        dosage = bare_value
                 flavor = next((flavor for flavor in FLAVORS if flavor in segment_low), None)
                 items.append(
                     OrderItem(
                         product_name=_catalog_label_for_item(product_name, dosage, flavor),
+                        raw_product_text=f"{alias} {segment}".strip(),
                         dosage=dosage,
                         flavor=flavor,
-                        quantity=int(quantity_match.group(1)),
+                        quantity=prefix_quantity or int(quantity_match.group(1)),
                         is_gift=any(word in segment_low for word in GIFT_WORDS),
                     )
                 )
-                segment_consumed_until = quantity_match.end()
+                segment_consumed_until = quantity_match.end() if quantity_match else 0
 
         consumed_until = max(consumed_until, segment_start + segment_consumed_until)
 
@@ -647,9 +794,19 @@ def _parse_item_line(line: str, current_product: str | None) -> tuple[OrderItem 
 
     product_name = _extract_product_name(line, current_product)
     dosage = _default_dosage(product_name, _parse_dosage(dosage_match))
+    if dosage == 100 and not dosage_match:
+        quantity = _extract_quantity(line)
+        bare_dosages = [
+            int(match.group(1))
+            for match in re.finditer(r"\b(100|150|250|350|500|600|1000|2000)\b", low)
+            if int(match.group(1)) != quantity
+        ]
+        if bare_dosages:
+            dosage = bare_dosages[0]
     flavor = next((flavor for flavor in FLAVORS if flavor in low), None)
     item = OrderItem(
         product_name=_catalog_label_for_item(product_name, dosage, flavor),
+        raw_product_text=line,
         dosage=dosage,
         flavor=flavor,
         quantity=_extract_quantity(line),
@@ -780,12 +937,17 @@ def _merge_with_fallback(
     return _finalize_extracted_order(extracted)
 
 
-async def parse_order_text(text: str, existing_shops: list[str] | None = None) -> dict:
+async def parse_order_text(
+    text: str,
+    existing_shops: list[str] | None = None,
+    catalog_products: list[dict] | None = None,
+) -> dict:
     settings = get_settings()
     api_key = os.getenv("GEMINI_API_KEY")
     fallback = fallback_parse_order_text(text, existing_shops)
     if not api_key:
-        return _finalize_extracted_order(fallback).model_dump(mode="json")
+        resolved = resolve_products_for_order(_finalize_extracted_order(fallback), catalog_products, text)
+        return resolved.model_dump(mode="json")
 
     client = genai.Client(api_key=api_key)
     try:
@@ -793,7 +955,7 @@ async def parse_order_text(text: str, existing_shops: list[str] | None = None) -
             model=settings.gemini_model,
             contents=text,
             config=types.GenerateContentConfig(
-                system_instruction=_build_system_instruction(existing_shops),
+                system_instruction=_build_system_instruction(existing_shops, catalog_products),
                 response_mime_type="application/json",
                 response_schema=ExtractedOrder,
             ),
@@ -803,6 +965,9 @@ async def parse_order_text(text: str, existing_shops: list[str] | None = None) -
             parsed = ExtractedOrder.model_validate(json.loads(response.text))
         elif not isinstance(parsed, ExtractedOrder):
             parsed = ExtractedOrder.model_validate(parsed)
-        return _merge_with_fallback(parsed, fallback, text, existing_shops).model_dump(mode="json")
+        merged = _merge_with_fallback(parsed, fallback, text, existing_shops)
+        resolved = resolve_products_for_order(merged, catalog_products, text)
+        return resolved.model_dump(mode="json")
     except Exception:
-        return _finalize_extracted_order(fallback).model_dump(mode="json")
+        resolved = resolve_products_for_order(_finalize_extracted_order(fallback), catalog_products, text)
+        return resolved.model_dump(mode="json")
