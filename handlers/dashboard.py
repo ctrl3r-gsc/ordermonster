@@ -1,19 +1,26 @@
 import logging
+import re
 from html import escape
 
 from aiogram import F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import DeliveryStatus, Order, OrderItem, OrderPayment, Shop
 from handlers.orders import display_order_number, order_card_keyboard, order_card_text
-from services.orders import all_shops, dashboard_has_next_page, dashboard_orders, format_dashboard_datetime, get_order
+from services.orders import all_shops, dashboard_has_next_page, dashboard_orders, format_dashboard_datetime, get_order, sanitize_shop_input
 
 router = Router()
 ORDER_CHAT_TYPES = (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP)
+
+
+class ShopFlow(StatesGroup):
+    editing_address = State()
 
 
 async def respond_to_message(message: Message, text: str, **kwargs):
@@ -85,8 +92,9 @@ def shops_keyboard(shops) -> InlineKeyboardMarkup:
 def shop_details_keyboard(shop_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Удалить магазин", callback_data=f"shops:delete:{shop_id}")],
-            [InlineKeyboardButton(text="🔙 К списку магазинов", callback_data="shops:list")],
+            [InlineKeyboardButton(text="📍 Add/Edit Address", callback_data=f"shops:edit_address:{shop_id}")],
+            [InlineKeyboardButton(text="🗑 Delete Shop", callback_data=f"shops:delete:{shop_id}")],
+            [InlineKeyboardButton(text="🔙 Back to Shops", callback_data="shops:list")],
         ]
     )
 
@@ -227,6 +235,53 @@ async def shop_open(callback: CallbackQuery, session: AsyncSession) -> None:
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("shops:edit_address:"))
+async def shop_edit_address(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    raw_shop_id = callback.data.rsplit(":", 1)[1]
+    try:
+        shop_id = int(raw_shop_id)
+    except ValueError:
+        await callback.answer("Invalid shop ID.", show_alert=True)
+        return
+    shop = await session.get(Shop, shop_id)
+    if shop is None:
+        await callback.answer("Shop not found.", show_alert=True)
+        await render_shops_list(callback, session)
+        return
+    await state.update_data(shop_id=shop.id)
+    await state.set_state(ShopFlow.editing_address)
+    await callback.message.edit_text("Send the shop address, Google Maps link, or phone number.")
+    await callback.answer()
+
+
+@router.message(ShopFlow.editing_address, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
+async def shop_save_address(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    data = await state.get_data()
+    shop = await session.get(Shop, int(data["shop_id"]))
+    if shop is None:
+        await respond_to_message(message, "Shop not found.")
+        await state.clear()
+        return
+    raw_value = (message.text or "").strip()
+    phone_match = re.search(r"\b\d{9,11}\b", raw_value)
+    if phone_match and raw_value == phone_match.group(0):
+        shop.phone_number = phone_match.group(0)
+    else:
+        phone_number = phone_match.group(0) if phone_match else shop.phone_number
+        _, clean_address = sanitize_shop_input(shop.name, raw_value, phone_number)
+        shop.address = clean_address
+        if phone_match:
+            shop.phone_number = phone_match.group(0)
+    await session.commit()
+    await state.clear()
+    await respond_to_message(
+        message,
+        await shop_details_text(session, shop),
+        reply_markup=shop_details_keyboard(shop.id),
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data.startswith("shops:delete:"))

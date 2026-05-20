@@ -658,6 +658,19 @@ def _parse_item_line(line: str, current_product: str | None) -> tuple[OrderItem 
     return item, product_name
 
 
+def _extract_trailing_shop_from_order_line(line: str) -> str | None:
+    clean = re.sub(r"https?://\S+|(?:maps\.app\.goo\.gl|goo\.gl|google\.com/maps)/?\S*", " ", line, flags=re.I)
+    clean = re.sub(r"\d+(?:[\.,]\d+)?\s*(?:mg|мг|g|гр|г)(?![a-zа-я])", " ", clean, flags=re.I)
+    clean = re.sub(r"\d+\s*(?:packs?|pcs?|pieces?|шт|штук|уп|пачек|пачки)", " ", clean, flags=re.I)
+    clean = re.sub(r"\b(?:x\s*\d+|\d+\s*x)\b", " ", clean, flags=re.I)
+    clean = re.sub(r"\b\d+\b", " ", clean)
+    for alias in PRODUCT_ALIASES:
+        clean = re.sub(rf"\b{re.escape(alias)}\b", " ", clean, flags=re.I)
+    clean = re.sub(r"\b(?:paid|cash|bank|transfer|transaction|card|total|итого)\b.*$", " ", clean, flags=re.I)
+    clean = re.sub(r"\s+", " ", clean).strip(" ,.;:-")
+    return clean or None
+
+
 def fallback_parse_order_text(text: str, existing_shops: list[str] | None = None) -> ExtractedOrder:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     dense_items, dense_shop = _parse_dense_inline_items(text) if "\n" not in text else ([], None)
@@ -683,6 +696,8 @@ def fallback_parse_order_text(text: str, existing_shops: list[str] | None = None
             item, current_product = _parse_item_line(line, current_product)
             if item:
                 items.append(item)
+                if not shop_name:
+                    shop_name = _extract_trailing_shop_from_order_line(line)
 
     resolved_shop_name = (
         _best_existing_shop_match(shop_name, existing_shops)

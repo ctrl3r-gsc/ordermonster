@@ -10,7 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import DeliveryStatus, Order, PaymentStatus
+from db.models import DeliveryStatus, Order
 from services.orders import (
     add_payment,
     all_shops,
@@ -75,7 +75,6 @@ class OrderFlow(StatesGroup):
     adding_address = State()
     adding_phone = State()
     entering_split_amount = State()
-    choosing_payment_method = State()
     entering_tracking = State()
     entering_custom_price = State()
 
@@ -161,7 +160,7 @@ def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardM
     order = order_or_id if hasattr(order_or_id, "id") else None
     order_id = order.id if order else int(order_or_id)
     is_delivered = order.delivery_status == DeliveryStatus.delivered if order else delivered
-    rows = [[InlineKeyboardButton(text="🔄 Change Payment Status", callback_data=f"pay_status:{order_id}")]]
+    rows = [[InlineKeyboardButton(text="🔄 Change Payment Status", callback_data=f"pay:{order_id}")]]
     if not is_delivered:
         rows.append([InlineKeyboardButton(text="✏️ Edit Delivery", callback_data=f"del:{order_id}")])
     rows.append([InlineKeyboardButton(text="💵 Edit Prices", callback_data=f"pr:{order_id}")])
@@ -215,35 +214,22 @@ def delete_confirmation_keyboard(order_id: int) -> InlineKeyboardMarkup:
 def payment_keyboard(order_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Paid in Full", callback_data=f"pf:{order_id}")],
-            [InlineKeyboardButton(text="Split Payment", callback_data=f"ps:{order_id}")],
-            [InlineKeyboardButton(text="Back", callback_data=f"ord:{order_id}")],
+            [InlineKeyboardButton(text="💵 Cash", callback_data=f"pay_method:{order_id}:cash")],
+            [InlineKeyboardButton(text="💳 Transfer", callback_data=f"pay_method:{order_id}:transaction")],
+            [InlineKeyboardButton(text="🪙 Crypto", callback_data=f"pay_method:{order_id}:crypto")],
+            [InlineKeyboardButton(text="🔙 Back", callback_data=f"ord:{order_id}")],
         ]
     )
 
 
-def payment_status_keyboard(order_id: int) -> InlineKeyboardMarkup:
+def payment_amount_keyboard(order_id: int, method: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💵 Mark as Cash", callback_data=f"pay_status_set:{order_id}:cash")],
-            [InlineKeyboardButton(text="💳 Mark as Transfer", callback_data=f"pay_status_set:{order_id}:transaction")],
-            [InlineKeyboardButton(text="🪙 Mark as Crypto", callback_data=f"pay_status_set:{order_id}:crypto")],
-            [InlineKeyboardButton(text="⏳ Reset to Processing (Unpaid)", callback_data=f"pay_status_set:{order_id}:unpaid")],
-            [InlineKeyboardButton(text="Back", callback_data=f"ord:{order_id}")],
+            [InlineKeyboardButton(text="✅ Fully Paid", callback_data=f"pay_apply:full:{order_id}:{method}")],
+            [InlineKeyboardButton(text="🧾 Partially Paid", callback_data=f"pay_apply:partial:{order_id}:{method}")],
+            [InlineKeyboardButton(text="🔙 Back", callback_data=f"pay:{order_id}")],
         ]
     )
-def method_keyboard(order_id: int, mode: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Cash", callback_data=f"pm:{mode}:{order_id}:cash"),
-                InlineKeyboardButton(text="Transaction", callback_data=f"pm:{mode}:{order_id}:transaction"),
-            ],
-            [InlineKeyboardButton(text="Crypto", callback_data=f"pm:{mode}:{order_id}:crypto")],
-        ]
-    )
-
-
 def delivery_keyboard(order_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -251,7 +237,7 @@ def delivery_keyboard(order_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="Shipped", callback_data=f"ship:{order_id}"),
                 InlineKeyboardButton(text="Delivered", callback_data=f"done:{order_id}"),
             ],
-            [InlineKeyboardButton(text="Back", callback_data=f"ord:{order_id}")],
+            [InlineKeyboardButton(text="🔙 Back", callback_data=f"ord:{order_id}")],
         ]
     )
 
@@ -265,7 +251,7 @@ def edit_prices_keyboard(order) -> InlineKeyboardMarkup:
             bits.append(str(product.flavor))
         bits.append(f"- {money(item_unit_price(item))} THB")
         rows.append([InlineKeyboardButton(text=" ".join(bits)[:60], callback_data=f"pi:{order.id}:{item.id}")])
-    rows.append([InlineKeyboardButton(text="Back", callback_data=f"ord:{order.id}")])
+    rows.append([InlineKeyboardButton(text="🔙 Back", callback_data=f"ord:{order.id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -482,45 +468,37 @@ async def open_order(callback: CallbackQuery, session: AsyncSession) -> None:
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("pay_status:"))
-async def edit_payment_status(callback: CallbackQuery) -> None:
+@router.callback_query(F.data.startswith("pay:"))
+async def edit_payment(callback: CallbackQuery) -> None:
     order_id = int(callback.data.split(":")[1])
-    await callback.message.edit_text("Change payment status:", reply_markup=payment_status_keyboard(order_id))
+    await callback.message.edit_text("Choose payment method:", reply_markup=payment_keyboard(order_id))
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("pay_status_set:"))
-async def choose_payment_status(callback: CallbackQuery, session: AsyncSession) -> None:
-    _, raw_order_id, status = callback.data.split(":")
-    order = await get_order(session, int(raw_order_id))
-    method = None if status == "unpaid" else status
-    updated_order = await set_order_payment_status(session, order, method)
+@router.callback_query(F.data.startswith("pay_method:"))
+async def choose_payment_method_first(callback: CallbackQuery) -> None:
+    _, raw_order_id, method = callback.data.split(":")
     await callback.message.edit_text(
-        order_card_text(updated_order),
-        reply_markup=order_card_keyboard(updated_order),
-        parse_mode="HTML",
+        "Choose payment amount:",
+        reply_markup=payment_amount_keyboard(int(raw_order_id), method),
     )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("pay:"))
-async def edit_payment(callback: CallbackQuery) -> None:
-    order_id = int(callback.data.split(":")[1])
-    await callback.message.edit_text("Payment options:", reply_markup=payment_keyboard(order_id))
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("pf:"))
-async def paid_full(callback: CallbackQuery) -> None:
-    order_id = int(callback.data.split(":")[1])
-    await callback.message.edit_text("Choose payment method:", reply_markup=method_keyboard(order_id, "full"))
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("ps:"))
-async def split_payment(callback: CallbackQuery, state: FSMContext) -> None:
-    order_id = int(callback.data.split(":")[1])
-    await state.update_data(order_id=order_id)
+@router.callback_query(F.data.startswith("pay_apply:"))
+async def apply_payment_amount(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    _, mode, raw_order_id, method = callback.data.split(":")
+    order = await get_order(session, int(raw_order_id))
+    if mode == "full":
+        updated_order = await set_order_payment_status(session, order, method)
+        await callback.message.edit_text(
+            order_card_text(updated_order),
+            reply_markup=order_card_keyboard(updated_order),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+    await state.update_data(order_id=order.id, method=method)
     await state.set_state(OrderFlow.entering_split_amount)
     await callback.message.edit_text("Type payment amount.")
     await callback.answer()
@@ -536,35 +514,22 @@ async def enter_split_amount(message: Message, state: FSMContext) -> None:
         await respond_to_message(message, "Enter a positive numeric amount.")
         return
     data = await state.get_data()
-    await state.update_data(amount=str(amount))
-    await state.set_state(OrderFlow.choosing_payment_method)
-    await respond_to_message(message, "Choose method:", reply_markup=method_keyboard(int(data["order_id"]), "split"))
-
-
-@router.callback_query(F.data.startswith("pm:"))
-async def choose_payment_method(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    _, mode, raw_order_id, method = callback.data.split(":")
-    order = await get_order(session, int(raw_order_id))
-    if mode == "full":
-        amount = remaining_amount(order) if order.total_amount else Decimal("0")
-    else:
-        data = await state.get_data()
-        amount = Decimal(data.get("amount", "0"))
-    if amount <= 0:
-        await show_order_card(callback.message, session, order.id)
+    order = await get_order(session, int(data["order_id"]))
+    method = data.get("method")
+    if not method:
+        await respond_to_message(message, "Payment method expired. Open Edit Payments again.")
         await state.clear()
-        await callback.answer()
+        return
+    if amount <= 0:
+        await state.clear()
+        await respond_to_message(message, "Payment amount was not applied.")
         return
     updated_order = await add_payment(session, order, method, amount)
-    updated_order.payment_status = PaymentStatus.paid if mode == "full" else updated_order.payment_status
     await session.commit()
     await session.refresh(updated_order)
     updated_order = await get_order(session, updated_order.id)
-    updated_text = order_card_text(updated_order)
-    updated_markup = order_card_keyboard(updated_order)
-    await callback.message.edit_text(text=updated_text, reply_markup=updated_markup, parse_mode="HTML")
+    await respond_to_message(message, order_card_text(updated_order), reply_markup=order_card_keyboard(updated_order), parse_mode="HTML")
     await state.clear()
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("del:"))
