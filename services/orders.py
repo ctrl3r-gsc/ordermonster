@@ -530,6 +530,26 @@ async def dashboard_orders(session: AsyncSession, page: int = 0, limit: int = 10
     )
 
 
+async def dashboard_status_counts(session: AsyncSession) -> dict[str, int]:
+    pending_deliveries = await session.scalar(
+        select(func.count(Order.id)).where(Order.delivery_status != DeliveryStatus.delivered)
+    )
+    processing_payments = await session.scalar(
+        select(func.count(Order.id)).where(Order.payment_status != PaymentStatus.paid)
+    )
+    closed_orders = await session.scalar(
+        select(func.count(Order.id)).where(
+            Order.delivery_status == DeliveryStatus.delivered,
+            Order.payment_status == PaymentStatus.paid,
+        )
+    )
+    return {
+        "pending_deliveries": int(pending_deliveries or 0),
+        "processing_payments": int(processing_payments or 0),
+        "closed_orders": int(closed_orders or 0),
+    }
+
+
 async def dashboard_has_next_page(session: AsyncSession, page: int = 0, limit: int = 10) -> bool:
     page = max(page, 0)
     limit = max(limit, 1)

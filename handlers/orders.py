@@ -18,6 +18,7 @@ from services.orders import (
     create_order_from_parsed,
     dashboard_has_next_page,
     dashboard_orders,
+    dashboard_status_counts,
     display_order_number,
     format_dashboard_datetime,
     format_order_datetime,
@@ -320,15 +321,23 @@ async def show_order_card(target: Message, session: AsyncSession, order_id: int)
     )
 
 
-def dashboard_summary_text(orders, page: int = 0) -> str:
-    pending_deliveries = sum(1 for order in orders if order.delivery_status != DeliveryStatus.delivered)
-    processing_payments = sum(1 for order in orders if order.payment_status.value != "paid")
+def dashboard_summary_text(orders, page: int = 0, counts: dict[str, int] | None = None) -> str:
+    counts = counts or {
+        "pending_deliveries": sum(1 for order in orders if order.delivery_status != DeliveryStatus.delivered),
+        "processing_payments": sum(1 for order in orders if order.payment_status.value != "paid"),
+        "closed_orders": sum(
+            1
+            for order in orders
+            if order.delivery_status == DeliveryStatus.delivered and order.payment_status.value == "paid"
+        ),
+    }
     return "\n".join(
         [
             "<b>Dashboard</b>",
             f"Page: <b>{page + 1}</b>",
-            f"Pending deliveries: <b>{pending_deliveries}</b>",
-            f"Processing payments: <b>{processing_payments}</b>",
+            f"Pending deliveries: <b>{counts['pending_deliveries']}</b>",
+            f"Processing payments: <b>{counts['processing_payments']}</b>",
+            f"Closed orders: <b>{counts['closed_orders']}</b>",
             "",
             "Latest orders:",
         ]
@@ -380,12 +389,13 @@ async def start(message: Message) -> None:
 async def dashboard_cb(callback: CallbackQuery, session: AsyncSession) -> None:
     orders = await dashboard_orders(session, page=0, limit=DASHBOARD_PAGE_SIZE)
     has_next = await dashboard_has_next_page(session, page=0, limit=DASHBOARD_PAGE_SIZE)
+    counts = await dashboard_status_counts(session)
     if not orders:
         await callback.message.edit_text("No dashboard orders found.", reply_markup=dashboard_empty_keyboard())
         await callback.answer()
         return
     await callback.message.edit_text(
-        dashboard_summary_text(orders, page=0),
+        dashboard_summary_text(orders, page=0, counts=counts),
         reply_markup=dashboard_keyboard(orders, page=0, has_next=has_next),
         parse_mode="HTML",
     )
@@ -789,11 +799,12 @@ async def confirm_delete(callback: CallbackQuery, session: AsyncSession) -> None
     else:
         orders = await dashboard_orders(session, page=0, limit=DASHBOARD_PAGE_SIZE)
         has_next = await dashboard_has_next_page(session, page=0, limit=DASHBOARD_PAGE_SIZE)
+        counts = await dashboard_status_counts(session)
         if not orders:
             await callback.message.edit_text("No dashboard orders found.")
         else:
             await callback.message.edit_text(
-                dashboard_summary_text(orders, page=0),
+                dashboard_summary_text(orders, page=0, counts=counts),
                 reply_markup=dashboard_keyboard(orders, page=0, has_next=has_next),
                 parse_mode="HTML",
             )
@@ -815,11 +826,12 @@ async def cancel_delete(callback: CallbackQuery, session: AsyncSession) -> None:
     else:
         orders = await dashboard_orders(session, page=0, limit=DASHBOARD_PAGE_SIZE)
         has_next = await dashboard_has_next_page(session, page=0, limit=DASHBOARD_PAGE_SIZE)
+        counts = await dashboard_status_counts(session)
         if not orders:
             await callback.message.edit_text("No dashboard orders found.")
         else:
             await callback.message.edit_text(
-                dashboard_summary_text(orders, page=0),
+                dashboard_summary_text(orders, page=0, counts=counts),
                 reply_markup=dashboard_keyboard(orders, page=0, has_next=has_next),
                 parse_mode="HTML",
             )
