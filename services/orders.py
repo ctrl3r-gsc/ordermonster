@@ -134,6 +134,23 @@ def strip_phone_from_address(address: str | None, phone_number: str | None) -> s
     return stripped.strip(" \t\r\n.,;:-") or None
 
 
+def sterilize_address(raw_address, phone_number):
+    if not raw_address:
+        return ""
+
+    # 1. Remove the exact phone number first
+    clean_addr = raw_address.replace(phone_number or "", "").strip()
+
+    # 2. Hard-strip any sequence of 9-11 digits (phones, long numbers)
+    # This acts as a final firewall against any numbers slipping through
+    clean_addr = re.sub(r"\d{9,11}", "", clean_addr)
+
+    # 3. Collapse extra newlines left by the removal
+    clean_addr = re.sub(r"\n+", "\n", clean_addr).strip()
+
+    return clean_addr
+
+
 async def get_or_create_shop(session: AsyncSession, name: str, address: str | None = None, phone_number: str | None = None) -> Shop:
     clean_name = (name or "").upper().strip()
     clean_name = sanitize_shop_name(clean_name)
@@ -288,7 +305,7 @@ async def find_product_for_item(
 
 def parsed_shop_contact(parsed: dict) -> tuple[str | None, str | None]:
     phone_number = clean_contact_value(parsed.get("phone_number"))
-    return strip_phone_from_address(parsed.get("address"), phone_number), phone_number
+    return clean_contact_value(sterilize_address(parsed.get("address"), phone_number)), phone_number
 
 
 async def shop_from_parsed(session: AsyncSession, parsed: dict, fallback_shop: Shop | None = None) -> Shop:
@@ -310,12 +327,7 @@ async def create_order_from_parsed(session: AsyncSession, parsed: dict, shop: Sh
     order_data = dict(parsed)
     extracted_phone = order_data.get("phone_number")
     raw_address = order_data.get("address")
-    if extracted_phone and raw_address:
-        # Remove all instances of the phone number from the address string.
-        # Also remove any dangling newlines or extra spaces.
-        clean_address = raw_address.replace(extracted_phone, "").strip()
-        # Clean up any potential double newlines or artifacts left behind.
-        order_data["address"] = clean_address.replace("\n\n", "\n").strip()
+    order_data["address"] = sterilize_address(raw_address, extracted_phone)
     parsed = order_data
     shop = await shop_from_parsed(session, parsed, fallback_shop=shop)
     await backfill_missing_order_display_numbers(session)
