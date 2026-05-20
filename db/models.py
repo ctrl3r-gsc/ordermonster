@@ -61,6 +61,7 @@ class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    display_number: Mapped[int | None] = mapped_column(Integer, index=True, nullable=True)
     shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id"))
     user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     delivery_status: Mapped[DeliveryStatus] = mapped_column(

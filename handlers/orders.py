@@ -17,6 +17,7 @@ from services.orders import (
     create_order_from_parsed,
     dashboard_has_next_page,
     dashboard_orders,
+    display_order_number,
     format_dashboard_datetime,
     format_order_datetime,
     get_or_create_shop,
@@ -108,14 +109,14 @@ def delivery_label(order) -> str:
 
 
 def product_display_name(product) -> str:
-    return escape(" ".join(str(product.name).split()).title())
+    return escape(" ".join(str(product.name).split()))
 
 
 def order_card_text(order, parsed_address: str | None = None, parsed_phone: str | None = None) -> str:
     address = parsed_address if parsed_address else order.shop.address or ""
     phone = parsed_phone if parsed_phone else order.shop.phone_number
     lines = [
-        f"📦 <b>Order # {order.id}</b>",
+        f"📦 <b>Order # {display_order_number(order)}</b>",
         f"📅 Date: {format_order_datetime(order.created_at)}",
         f"🏪 Shop: <b>{escape(order.shop.name)}</b>",
         f"📍 Address: {escape(address)}",
@@ -129,18 +130,15 @@ def order_card_text(order, parsed_address: str | None = None, parsed_phone: str 
             details = []
             if product.flavor:
                 details.append(f"({escape(product.flavor)})")
-            if product.dosage:
-                details.append(f"{product.dosage}mg")
             suffix = f" {' '.join(details)}" if details else ""
             lines.append(f"• {product_display_name(product)}{suffix} (Gift 🎁) — {item.quantity} pcs = <b>0 THB</b>")
             continue
 
         flavor = f" ({escape(product.flavor)})" if product.flavor else ""
-        dosage = f" {product.dosage}mg" if product.dosage else ""
         unit_price = item_unit_price(item)
         subtotal = item_subtotal(item)
         lines.append(
-            f"• {product_display_name(product)}{flavor}{dosage} — "
+            f"• {product_display_name(product)}{flavor} — "
             f"{item.quantity} pcs x {money(unit_price)} THB = <b>{money(subtotal)} THB</b>"
         )
     lines.extend(
@@ -199,10 +197,9 @@ def draft_order_card_text(parsed: dict) -> str:
         lines.append(f"📱 Mobile: {escape(phone)}")
     lines.extend(["", "🛍️ <b>Items:</b>"])
     for item in parsed.get("items", []):
-        product_name = escape(str(item.get("product_name") or "Item").title())
-        dosage = f" {item.get('dosage')}mg" if item.get("dosage") else ""
+        product_name = escape(str(item.get("product_name") or "Item"))
         quantity = int(item.get("quantity") or 1)
-        lines.append(f"• {product_name}{dosage} — {quantity} pcs")
+        lines.append(f"• {product_name} — {quantity} pcs")
     return "\n".join(lines)
 
 
@@ -261,11 +258,9 @@ def edit_prices_keyboard(order) -> InlineKeyboardMarkup:
     rows = []
     for index, item in enumerate(order.items, start=1):
         product = item.product
-        bits = [f"{index}.", product.name.title()]
+        bits = [f"{index}.", product.name]
         if product.flavor:
             bits.append(str(product.flavor))
-        if product.dosage:
-            bits.append(f"{product.dosage}mg")
         bits.append(f"- {money(item_unit_price(item))} THB")
         rows.append([InlineKeyboardButton(text=" ".join(bits)[:60], callback_data=f"pi:{order.id}:{item.id}")])
     rows.append([InlineKeyboardButton(text="Back", callback_data=f"ord:{order.id}")])
@@ -305,7 +300,7 @@ def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineK
     for order in orders:
         created_at = format_dashboard_datetime(order.created_at).replace(" ", " (") + ")"
         text = (
-            f"#{order.id} | 📅 {created_at} | {order.shop.name[:18]} | "
+            f"#{display_order_number(order)} | 📅 {created_at} | {order.shop.name[:18]} | "
             f"{dashboard_order_state_emoji(order)}"
         )
         rows.append([InlineKeyboardButton(text=text[:64], callback_data=f"ord:{order.id}")])
@@ -567,7 +562,7 @@ async def delete_order(callback: CallbackQuery, session: AsyncSession) -> None:
         return
 
     await callback.message.edit_text(
-        f"{order_card_text(order)}\n\nDelete order #{order_id}?",
+        f"{order_card_text(order)}\n\nDelete order #{display_order_number(order)}?",
         reply_markup=delete_confirmation_keyboard(order_id),
         parse_mode="HTML",
     )
@@ -605,7 +600,7 @@ async def confirm_delete(callback: CallbackQuery, session: AsyncSession) -> None
                 parse_mode="HTML",
             )
 
-    await callback.answer(f"Order #{order_id} deleted")
+    await callback.answer(f"Order #{display_order_number(order)} deleted")
 
 
 @router.callback_query(F.data.startswith("cancel_del:"))
@@ -655,9 +650,7 @@ async def choose_price_item(callback: CallbackQuery, state: FSMContext, session:
     await state.update_data(order_id=order.id, item_id=item.id)
     await state.set_state(OrderFlow.entering_custom_price)
     product = item.product
-    label = product.name.title()
-    if product.dosage:
-        label += f" {product.dosage}mg"
+    label = product.name
     await callback.message.edit_text(
         f"Enter custom price per unit for this item (in THB):\n{escape(label)}",
         parse_mode="HTML",

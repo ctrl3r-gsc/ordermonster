@@ -1,42 +1,42 @@
 [
   {
-    "name": "ULTIMATE GUMMIES MANGO 100mg THC",
+    "name": "ULTIMATE GUMMIES MANGO 100mg",
     "dosage": 100,
     "potency_type": "THC",
     "price": 80.00
   },
   {
-    "name": "ULTIMATE GUMMIES GREEN APPLE 250mg THC",
+    "name": "ULTIMATE GUMMIES GREEN APPLE 250mg",
     "dosage": 250,
     "potency_type": "THC",
     "price": 170.00
   },
   {
-    "name": "ULTIMATE GUMMIES STRAWBERRY 500mg THC",
+    "name": "ULTIMATE GUMMIES STRAWBERRY 500mg",
     "dosage": 500,
     "potency_type": "THC",
     "price": 270.00
   },
   {
-    "name": "X-HASH GUMMIES PINEAPPLE 150mg hash",
+    "name": "X-HASH GUMMIES PINEAPPLE 150mg",
     "dosage": 150,
     "potency_type": "hash",
     "price": 130.00
   },
   {
-    "name": "X-HASH GUMMIES BLACKCURRANT 350mg hash",
+    "name": "X-HASH GUMMIES BLACKCURRANT 350mg",
     "dosage": 350,
     "potency_type": "hash",
     "price": 230.00
   },
   {
-    "name": "X-HASH GUMMIES WATERMELON 600mg hash",
+    "name": "X-HASH GUMMIES WATERMELON 600mg",
     "dosage": 600,
     "potency_type": "hash",
     "price": 330.00
   },
   {
-    "name": "ROSIN GUMMIES GREEN APPLE 250mg rosin",
+    "name": "ROSIN GUMMIES GREEN APPLE 250mg",
     "dosage": 250,
     "potency_type": "rosin",
     "price": 300.00

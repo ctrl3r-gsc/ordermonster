@@ -24,7 +24,7 @@ async def seed_current_catalog(session: AsyncSession, path: Path = DEFAULT_CATAL
         missing_fields = REQUIRED_CATALOG_FIELDS - item.keys()
         if missing_fields:
             raise ValueError(f"Catalog item is missing required fields: {', '.join(sorted(missing_fields))}")
-        name = item["name"].strip().lower()
+        name = item["name"].strip()
         dosage = item.get("dosage")
         flavor = item.get("flavor")
         price_value = Decimal(str(item.get("price") or 0))

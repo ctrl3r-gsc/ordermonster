@@ -9,7 +9,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import DeliveryStatus, Order, OrderItem, OrderPayment, Shop
-from handlers.orders import order_card_keyboard, order_card_text
+from handlers.orders import display_order_number, order_card_keyboard, order_card_text
 from services.orders import all_shops, dashboard_has_next_page, dashboard_orders, format_dashboard_datetime, get_order
 
 router = Router()
@@ -49,7 +49,7 @@ def order_state_emoji(order) -> str:
 def dashboard_button_text(order) -> str:
     created_at = format_dashboard_datetime(order.created_at).replace(" ", " (") + ")"
     shop_name = order.shop.name[:18]
-    return f"#{order.id} | 📅 {created_at} | {shop_name} | {order_state_emoji(order)}"[:64]
+    return f"#{display_order_number(order)} | 📅 {created_at} | {shop_name} | {order_state_emoji(order)}"[:64]
 
 
 def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineKeyboardMarkup:

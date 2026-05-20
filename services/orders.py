@@ -72,6 +72,10 @@ def format_dashboard_datetime(value: datetime | None) -> str:
     return local_value.strftime("%d.%m %H:%M")
 
 
+def display_order_number(order: Order) -> int:
+    return order.display_number or order.id
+
+
 def item_unit_price(item: OrderItem) -> Decimal:
     if item.is_gift:
         return Decimal("0.00")
@@ -113,6 +117,21 @@ def clean_contact_value(value: str | None) -> str | None:
     if not clean or clean.lower() in {"not specified", "unknown", "none", "null"}:
         return None
     return clean
+
+
+def strip_phone_from_address(address: str | None, phone_number: str | None) -> str | None:
+    clean_address = clean_contact_value(address)
+    clean_phone = clean_contact_value(phone_number)
+    if not clean_address or not clean_phone:
+        return clean_address
+    stripped = clean_address.replace(clean_phone, " ")
+    phone_digits = re.sub(r"\D+", "", clean_phone)
+    if phone_digits:
+        stripped = stripped.replace(phone_digits, " ")
+    stripped = re.sub(r"[ \t]*\n[ \t]*", "\n", stripped)
+    stripped = re.sub(r"[ \t]{2,}", " ", stripped)
+    stripped = re.sub(r"\n{2,}", "\n", stripped)
+    return stripped.strip(" \t\r\n.,;:-") or None
 
 
 async def get_or_create_shop(session: AsyncSession, name: str, address: str | None = None, phone_number: str | None = None) -> Shop:
@@ -239,7 +258,7 @@ async def get_or_create_product(
             product.is_active = is_active
         return product
     product = Product(
-        name=name.strip().lower(),
+        name=name.strip(),
         dosage=dosage,
         flavor=flavor,
         potency_type=potency_type,
@@ -268,7 +287,8 @@ async def find_product_for_item(
 
 
 def parsed_shop_contact(parsed: dict) -> tuple[str | None, str | None]:
-    return clean_contact_value(parsed.get("address")), clean_contact_value(parsed.get("phone_number"))
+    phone_number = clean_contact_value(parsed.get("phone_number"))
+    return strip_phone_from_address(parsed.get("address"), phone_number), phone_number
 
 
 async def shop_from_parsed(session: AsyncSession, parsed: dict, fallback_shop: Shop | None = None) -> Shop:
@@ -288,7 +308,13 @@ async def shop_from_parsed(session: AsyncSession, parsed: dict, fallback_shop: S
 
 async def create_order_from_parsed(session: AsyncSession, parsed: dict, shop: Shop, user_id: int) -> Order:
     shop = await shop_from_parsed(session, parsed, fallback_shop=shop)
-    order = Order(shop_id=shop.id, user_id=user_id, total_amount=Decimal("0.00"))
+    await backfill_missing_order_display_numbers(session)
+    order = Order(
+        display_number=await next_order_display_number(session),
+        shop_id=shop.id,
+        user_id=user_id,
+        total_amount=Decimal("0.00"),
+    )
     session.add(order)
     await session.flush()
     calculated_total = Decimal("0.00")
@@ -328,6 +354,19 @@ async def create_order_from_parsed(session: AsyncSession, parsed: dict, shop: Sh
     return await get_order(session, order.id)
 
 
+async def next_order_display_number(session: AsyncSession) -> int:
+    current_max = await session.scalar(select(func.max(Order.display_number)))
+    return int(current_max or 0) + 1
+
+
+async def backfill_missing_order_display_numbers(session: AsyncSession) -> None:
+    orders = list((await session.scalars(select(Order).where(Order.display_number.is_(None)))).all())
+    for order in orders:
+        order.display_number = order.id
+    if orders:
+        await session.flush()
+
+
 async def recalculate_order_total(session: AsyncSession, order: Order) -> Order:
     order.total_amount = calculate_order_total(order)
     refresh_payment_status(order)
@@ -360,6 +399,9 @@ async def get_order(session: AsyncSession, order_id: int) -> Order:
     )
     if order is None:
         raise ValueError(f"Order {order_id} not found")
+    if order.display_number is None:
+        order.display_number = order.id
+        await session.flush()
     return order
 
 
@@ -393,6 +435,7 @@ async def add_payment(session: AsyncSession, order: Order, method: str, amount: 
 
 
 async def dashboard_orders(session: AsyncSession, page: int = 0, limit: int = 10) -> list[Order]:
+    await backfill_missing_order_display_numbers(session)
     page = max(page, 0)
     limit = max(limit, 1)
     return list(

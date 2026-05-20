@@ -11,6 +11,9 @@ from services.catalog import seed_current_catalog
 async def migrate(catalog_path: Path) -> None:
     await init_db()
     async with SessionLocal() as session:
+        await session.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS display_number INTEGER;"))
+        await session.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_display_number ON orders (display_number);"))
+        await session.execute(text("UPDATE orders SET display_number = id WHERE display_number IS NULL;"))
         await session.execute(text("TRUNCATE TABLE products RESTART IDENTITY CASCADE;"))
         current_catalog_count = await seed_current_catalog(session, catalog_path)
         await session.commit()
