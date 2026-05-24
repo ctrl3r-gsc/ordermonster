@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -46,19 +46,28 @@ def finance_payment_method(method: PaymentMethod | str | None) -> CompanyTransac
 
 
 def order_finance_payment_method(order: Order) -> CompanyTransactionPaymentMethod:
-    if not order.payments:
+    latest_payment = latest_order_payment(order)
+    if latest_payment is None:
         return CompanyTransactionPaymentMethod.unknown
-    methods = {payment.payment_method for payment in order.payments}
-    if len(methods) == 1:
-        return finance_payment_method(next(iter(methods)))
-    return finance_payment_method(order.payments[-1].payment_method)
+    return finance_payment_method(latest_payment.payment_method)
+
+
+def latest_order_payment(order: Order) -> OrderPayment | None:
+    if not order.payments:
+        return None
+    return max(
+        order.payments,
+        key=lambda payment: (
+            payment.created_at or datetime.min.replace(tzinfo=timezone.utc),
+            payment.id or 0,
+        ),
+    )
 
 
 def order_income_transaction_date(order: Order) -> datetime:
-    if order.payments:
-        latest = max((payment.created_at for payment in order.payments if payment.created_at), default=None)
-        if latest:
-            return latest
+    latest_payment = latest_order_payment(order)
+    if latest_payment is not None and latest_payment.created_at:
+        return latest_payment.created_at
     return order.updated_at or order.created_at or datetime.now(timezone.utc)
 
 
@@ -92,8 +101,7 @@ async def sync_order_income_transaction(session: AsyncSession, order: Order) -> 
 
     transaction_date = order_income_transaction_date(order)
     payment_method = order_finance_payment_method(order)
-    amount = decimal_money(order.total_amount) if order.payment_status == PaymentStatus.paid else current_paid
-    amount = current_paid if amount <= 0 else amount
+    amount = current_paid
 
     if existing is None:
         transaction = CompanyTransaction(
@@ -117,6 +125,7 @@ async def sync_order_income_transaction(session: AsyncSession, order: Order) -> 
     existing.payment_method = payment_method
     existing.description = f"Order #{order.display_number or order.id}"
     existing.transaction_date = transaction_date
+    existing.updated_at = datetime.now(timezone.utc)
     await session.flush()
     return existing
 
@@ -218,7 +227,10 @@ async def backfill_ordermonster_income_transactions(session: AsyncSession) -> Fi
         (
             await session.scalars(
                 select(Order)
+                .where(Order.payment_status == PaymentStatus.paid)
+                .join(OrderPayment, OrderPayment.order_id == Order.id)
                 .options(selectinload(Order.payments))
+                .distinct()
                 .order_by(Order.id.asc())
             )
         ).all()
@@ -228,11 +240,7 @@ async def backfill_ordermonster_income_transactions(session: AsyncSession) -> Fi
         current_paid = decimal_money(paid_amount(order))
         existing = await order_income_transaction(session, order.id)
         if current_paid <= 0:
-            if existing is None:
-                summary.skipped += 1
-                continue
-            await session.execute(delete(CompanyTransaction).where(CompanyTransaction.id == existing.id))
-            summary.updated += 1
+            summary.skipped += 1
             continue
 
         await sync_order_income_transaction(session, order)

@@ -720,7 +720,7 @@ async def apply_payment_amount(callback: CallbackQuery, state: FSMContext, sessi
 
 
 @router.message(OrderFlow.entering_split_amount, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
-async def enter_split_amount(message: Message, state: FSMContext) -> None:
+async def enter_split_amount(message: Message, state: FSMContext, session: AsyncSession) -> None:
     try:
         amount = Decimal(message.text.replace(",", "").strip())
         if amount <= 0:

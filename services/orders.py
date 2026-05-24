@@ -423,13 +423,8 @@ async def backfill_missing_order_display_numbers(session: AsyncSession) -> None:
 
 async def recalculate_order_total(session: AsyncSession, order: Order) -> Order:
     order.total_amount = calculate_order_total(order)
-    refresh_payment_status(order)
     await session.flush()
-    order = await get_order(session, order.id)
-    from services.finance import sync_order_income_transaction
-
-    await sync_order_income_transaction(session, order)
-    return await get_order(session, order.id)
+    return await sync_order_payment_state(session, order)
 
 
 async def update_item_unit_price(
@@ -483,9 +478,7 @@ def refresh_payment_status(order: Order) -> None:
         order.payment_status = PaymentStatus.unpaid
 
 
-async def add_payment(session: AsyncSession, order: Order, method: str, amount: Decimal) -> Order:
-    session.add(OrderPayment(order_id=order.id, payment_method=PaymentMethod(method), amount=amount))
-    await session.flush()
+async def sync_order_payment_state(session: AsyncSession, order: Order) -> Order:
     order = await get_order(session, order.id)
     refresh_payment_status(order)
     await session.flush()
@@ -494,6 +487,12 @@ async def add_payment(session: AsyncSession, order: Order, method: str, amount: 
 
     await sync_order_income_transaction(session, order)
     return await get_order(session, order.id)
+
+
+async def add_payment(session: AsyncSession, order: Order, method: str, amount: Decimal) -> Order:
+    session.add(OrderPayment(order_id=order.id, payment_method=PaymentMethod(method), amount=amount))
+    await session.flush()
+    return await sync_order_payment_state(session, order)
 
 
 async def set_order_payment_status(session: AsyncSession, order: Order, method: str | None) -> Order:
@@ -505,10 +504,7 @@ async def set_order_payment_status(session: AsyncSession, order: Order, method: 
         session.add(OrderPayment(order_id=order.id, payment_method=PaymentMethod(method), amount=amount))
         order.payment_status = PaymentStatus.paid
     await session.flush()
-    order = await get_order(session, order.id)
-    from services.finance import sync_order_income_transaction
-
-    await sync_order_income_transaction(session, order)
+    order = await sync_order_payment_state(session, order)
     await session.commit()
     return await get_order(session, order.id)
 
