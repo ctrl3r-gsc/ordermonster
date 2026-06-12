@@ -1,3 +1,4 @@
+import calendar
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -160,4 +161,183 @@ def aggregate_shop_sales_rows(rows, period: str) -> dict:
         "total_paid_orders": total_paid_orders,
         "active_shops": len(shops),
         "shops": shops,
+    }
+
+
+def aggregate_followup_rows(rows, mode: str) -> dict:
+    shops = []
+    for row in rows:
+        days_since = None if row.days_since_last_order is None else int(row.days_since_last_order)
+        unpaid_amount = decimal_money(row.unpaid_amount)
+        if unpaid_amount > 0:
+            priority = 0
+            action = "Payment follow-up first"
+        elif days_since is None:
+            priority = 1
+            action = "Introduce catalog"
+        elif days_since >= 14:
+            priority = 2
+            action = "Send reorder message"
+        else:
+            priority = 3
+            action = "Check reorder timing"
+        shops.append(
+            {
+                "shop_id": row.shop_id,
+                "shop_name": row.shop_name,
+                "last_order_id": row.last_order_id,
+                "last_order_at": row.last_order_at,
+                "days_since_last_order": days_since,
+                "last_order_amount": decimal_money(row.last_order_amount),
+                "last_products": row.last_products or "",
+                "unpaid_amount": unpaid_amount,
+                "suggested_action": action,
+                "priority": priority,
+            }
+        )
+    shops.sort(
+        key=lambda item: (
+            item["priority"],
+            -float(item["unpaid_amount"]),
+            -(item["days_since_last_order"] or 9999),
+            item["shop_name"],
+        )
+    )
+    return {"mode": mode, "shops": shops}
+
+
+def aggregate_product_performance_rows(rows, mode: str) -> dict:
+    products = []
+    for row in rows:
+        products.append(
+            {
+                "product_id": row.product_id,
+                "product_name": row.product_name,
+                "quantity_sold": int(row.quantity_sold or 0),
+                "revenue": decimal_money(row.revenue),
+                "paid_orders": int(row.paid_orders or 0),
+                "last_sold_at": row.last_sold_at,
+            }
+        )
+    return {"mode": mode, "products": products}
+
+
+def days_in_month(value: datetime) -> int:
+    return calendar.monthrange(value.year, value.month)[1]
+
+
+def aggregate_forecast(rows, mode: str, start_at: datetime, end_at: datetime, horizon_days: int | None = None) -> dict:
+    elapsed_seconds = max((end_at - start_at).total_seconds(), 1)
+    days_observed = max(elapsed_seconds / 86400, 1 / 24)
+    if mode == "month":
+        total_days = days_in_month(end_at.astimezone(BANGKOK_TZ))
+        days_passed = max(end_at.astimezone(BANGKOK_TZ).day, 1)
+        multiplier = Decimal(str(total_days)) / Decimal(str(days_passed))
+        label = "This month"
+    else:
+        total_days = int(horizon_days or round(days_observed) or 7)
+        days_passed = Decimal(str(round(days_observed, 2)))
+        multiplier = Decimal(str(total_days)) / Decimal(str(days_observed))
+        label = {
+            "next7": "Next 7 days",
+            "last7": "Based on last 7 days",
+            "last30": "Based on last 30 days",
+        }.get(mode, mode)
+
+    revenue_so_far = Decimal("0.00")
+    paid_order_ids: set[int] = set()
+    products_sold = 0
+    products = []
+    for row in rows:
+        quantity = int(row.quantity_sold or 0)
+        revenue = decimal_money(row.revenue)
+        order_count = int(row.paid_orders or 0)
+        revenue_so_far += revenue
+        products_sold += quantity
+        if row.order_ids:
+            paid_order_ids.update(int(order_id) for order_id in row.order_ids if order_id is not None)
+        products.append(
+            {
+                "product_id": row.product_id,
+                "product_name": row.product_name,
+                "projected_quantity": int((Decimal(quantity) * multiplier).quantize(Decimal("1"))),
+                "quantity_sold": quantity,
+                "paid_orders": order_count,
+            }
+        )
+
+    projected_revenue = (revenue_so_far * multiplier).quantize(Decimal("0.01"))
+    projected_orders = int((Decimal(len(paid_order_ids)) * multiplier).quantize(Decimal("1")))
+    projected_quantity = int((Decimal(products_sold) * multiplier).quantize(Decimal("1")))
+    daily_average = (revenue_so_far / Decimal(str(days_observed))).quantize(Decimal("0.01"))
+    products.sort(key=lambda item: item["projected_quantity"], reverse=True)
+
+    return {
+        "mode": mode,
+        "label": label,
+        "revenue_so_far": revenue_so_far.quantize(Decimal("0.01")),
+        "paid_orders": len(paid_order_ids),
+        "products_sold": products_sold,
+        "days_passed": days_passed,
+        "total_days": total_days,
+        "daily_average": daily_average,
+        "projected_revenue": projected_revenue,
+        "projected_paid_orders": projected_orders,
+        "projected_products_sold": projected_quantity,
+        "products": products,
+        "limited_data": len(paid_order_ids) < 3 or revenue_so_far <= 0,
+    }
+
+
+def aggregate_shop_analytics(sales_rows, top_product_rows, last_product_rows, shop, period: str) -> dict:
+    revenue = Decimal("0.00")
+    paid_orders: set[int] = set()
+    quantity_sold = 0
+    last_order_at = None
+    unpaid_amount = Decimal("0.00")
+    for row in sales_rows:
+        revenue += decimal_money(row.revenue)
+        quantity_sold += int(row.quantity_sold or 0)
+        if row.order_ids:
+            paid_orders.update(int(order_id) for order_id in row.order_ids if order_id is not None)
+        if row.last_order_at and (last_order_at is None or row.last_order_at > last_order_at):
+            last_order_at = row.last_order_at
+        unpaid_amount = decimal_money(row.unpaid_amount)
+
+    paid_order_count = len(paid_orders)
+    average_order = (revenue / paid_order_count).quantize(Decimal("0.01")) if paid_order_count else Decimal("0.00")
+    top_products = [
+        {
+            "product_name": row.product_name,
+            "quantity_sold": int(row.quantity_sold or 0),
+            "revenue": decimal_money(row.revenue),
+        }
+        for row in top_product_rows
+    ]
+    last_products = [
+        {
+            "product_name": row.product_name,
+            "quantity": int(row.quantity or 0),
+        }
+        for row in last_product_rows
+    ]
+    if unpaid_amount > 0:
+        action = "Payment follow-up first"
+    elif last_products:
+        action = "Offer reorder based on last purchased products"
+    else:
+        action = "Check in and share current catalog"
+    return {
+        "shop_id": shop.id,
+        "shop_name": shop.name,
+        "period": period,
+        "paid_revenue": revenue.quantize(Decimal("0.01")),
+        "paid_orders": paid_order_count,
+        "average_order": average_order,
+        "quantity_sold": quantity_sold,
+        "last_order_at": last_order_at,
+        "unpaid_amount": unpaid_amount,
+        "top_products": top_products,
+        "last_products": last_products,
+        "suggested_action": action,
     }

@@ -32,6 +32,9 @@ async def main() -> None:
                 BotCommand(command="statistics", description="Product sales statistics"),
                 BotCommand(command="debts", description="Delivered and unpaid orders"),
                 BotCommand(command="statistics_shops", description="Shop sales statistics"),
+                BotCommand(command="followups", description="Shops that need follow-up"),
+                BotCommand(command="slow_products", description="Product performance and slow movers"),
+                BotCommand(command="forecast", description="Sales forecast"),
             ]
         )
 

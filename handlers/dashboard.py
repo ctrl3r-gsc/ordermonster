@@ -106,6 +106,7 @@ def shops_keyboard(shops) -> InlineKeyboardMarkup:
 def shop_details_keyboard(shop_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="📊 Shop Analytics", callback_data=f"crm:shop_analytics:{shop_id}:month")],
             [InlineKeyboardButton(text="📍 Add/Edit Address", callback_data=f"shops:edit_address:{shop_id}")],
             [InlineKeyboardButton(text="🗑 Delete Shop", callback_data=f"shops:delete:{shop_id}")],
             [InlineKeyboardButton(text="🔙 Back to Shops", callback_data="shops:list")],
