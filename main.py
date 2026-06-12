@@ -28,8 +28,10 @@ async def main() -> None:
     async def on_startup(*_):
         await bot.set_my_commands(
             [
-                BotCommand(command="dashboard", description="Show dashboard and manage orders"),
-                BotCommand(command="statistics", description="Show product sales statistics"),
+                BotCommand(command="dashboard", description="Quick order overview"),
+                BotCommand(command="statistics", description="Product sales statistics"),
+                BotCommand(command="debts", description="Delivered and unpaid orders"),
+                BotCommand(command="statistics_shops", description="Shop sales statistics"),
             ]
         )
 

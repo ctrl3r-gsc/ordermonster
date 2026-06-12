@@ -70,3 +70,94 @@ def aggregate_stats_rows(rows, total_paid_orders: int, period: str) -> dict:
         "total_quantity": total_quantity,
         "products": products,
     }
+
+
+def aggregate_debt_rows(rows, mode: str) -> dict:
+    orders = []
+    total_debt = Decimal("0.00")
+
+    for row in rows:
+        amount = decimal_money(row.debt_amount)
+        total_debt += amount
+        orders.append(
+            {
+                "order_id": row.order_id,
+                "display_number": row.display_number or row.order_id,
+                "shop_name": row.shop_name,
+                "debt_amount": amount,
+                "delivery_status": row.delivery_status,
+                "created_at": row.created_at,
+                "age_days": int(row.age_days or 0),
+            }
+        )
+
+    return {
+        "mode": mode,
+        "total_debt": total_debt.quantize(Decimal("0.01")),
+        "order_count": len(orders),
+        "orders": orders,
+    }
+
+
+def aggregate_debt_shop_rows(rows, mode: str = "shops") -> dict:
+    shops = []
+    total_debt = Decimal("0.00")
+    total_orders = 0
+
+    for row in rows:
+        amount = decimal_money(row.debt_amount)
+        order_count = int(row.order_count or 0)
+        total_debt += amount
+        total_orders += order_count
+        shops.append(
+            {
+                "shop_id": row.shop_id,
+                "shop_name": row.shop_name,
+                "debt_amount": amount,
+                "order_count": order_count,
+            }
+        )
+
+    return {
+        "mode": mode,
+        "total_debt": total_debt.quantize(Decimal("0.01")),
+        "order_count": total_orders,
+        "shops": shops,
+    }
+
+
+def aggregate_shop_sales_rows(rows, period: str) -> dict:
+    shops = []
+    total_revenue = Decimal("0.00")
+    total_paid_orders = 0
+
+    for row in rows:
+        paid_orders = int(row.paid_orders or 0)
+        revenue = decimal_money(row.revenue)
+        quantity_sold = int(row.quantity_sold or 0)
+        unpaid_amount = decimal_money(row.unpaid_amount)
+        average_order = (revenue / paid_orders).quantize(Decimal("0.01")) if paid_orders else Decimal("0.00")
+        if paid_orders <= 0 and revenue <= 0:
+            continue
+        total_revenue += revenue
+        total_paid_orders += paid_orders
+        shops.append(
+            {
+                "shop_id": row.shop_id,
+                "shop_name": row.shop_name,
+                "revenue": revenue,
+                "paid_orders": paid_orders,
+                "average_order": average_order,
+                "quantity_sold": quantity_sold,
+                "last_order_at": row.last_order_at,
+                "unpaid_amount": unpaid_amount,
+            }
+        )
+
+    return {
+        "period": period,
+        "total_revenue": total_revenue.quantize(Decimal("0.01")),
+        "total_paid_orders": total_paid_orders,
+        "active_shops": len(shops),
+        "shops": shops,
+    }
