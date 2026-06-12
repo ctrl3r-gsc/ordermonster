@@ -14,6 +14,12 @@ from db.models import Product, ProductAlias
 DEFAULT_CATALOG_PATH = Path("data/current_products.json")
 EXPECTED_CATALOG_SIZE = 13
 REQUIRED_CATALOG_FIELDS = {"name", "dosage", "price"}
+REQUIRED_PRODUCT_ALIASES = [
+    ("ROSIN GUMMIES GREEN APPLE 250mg", 7, ["gummies rosin", "rosin gummies", "rosin gummy", "apple rosin", "green apple rosin"]),
+    ("X-HASH GUMMIES BLACKCURRANT 350mg", 5, ["gummies 350", "350 gummies", "gummies 350mg"]),
+    ("ULTIMATE GUMMIES GREEN APPLE 250mg", 2, ["250 gummies", "gummies 250mg"]),
+    ("BROWNIE 500mg", 53, ["brownie 500", "brownie 500mg"]),
+]
 
 
 def slugify_sku_part(value: str | int | None) -> str:
@@ -96,20 +102,39 @@ async def seed_current_catalog(session: AsyncSession, path: Path = DEFAULT_CATAL
             result = await session.execute(stmt.returning(Product.id))
             product_id = result.scalar_one()
         for alias in item.get("aliases", []):
-            clean_alias = " ".join(str(alias).lower().split())
-            if not clean_alias:
-                continue
-            alias_stmt = insert(ProductAlias).values(
-                product_id=product_id,
-                alias=clean_alias,
-                is_active=True,
-            ).on_conflict_do_update(
-                index_elements=[ProductAlias.product_id, ProductAlias.alias],
-                set_={"is_active": True},
-            )
-            await session.execute(alias_stmt)
+            await upsert_product_alias(session, product_id, alias)
+    await ensure_required_product_aliases(session)
     await session.flush()
     return len(products)
+
+
+async def upsert_product_alias(session: AsyncSession, product_id: int, alias: str) -> None:
+    clean_alias = " ".join(str(alias).lower().split())
+    if not clean_alias:
+        return
+    alias_stmt = insert(ProductAlias).values(
+        product_id=product_id,
+        alias=clean_alias,
+        is_active=True,
+    ).on_conflict_do_update(
+        index_elements=[ProductAlias.product_id, ProductAlias.alias],
+        set_={"is_active": True},
+    )
+    await session.execute(alias_stmt)
+
+
+async def ensure_required_product_aliases(session: AsyncSession) -> None:
+    for product_name, legacy_product_id, aliases in REQUIRED_PRODUCT_ALIASES:
+        product = await session.scalar(
+            select(Product).where(
+                (Product.name == product_name) | (Product.id == legacy_product_id),
+                Product.is_active.is_(True),
+            )
+        )
+        if not product:
+            continue
+        for alias in aliases:
+            await upsert_product_alias(session, product.id, alias)
 
 
 async def active_catalog(session: AsyncSession) -> list[Product]:

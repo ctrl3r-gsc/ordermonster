@@ -504,9 +504,7 @@ async def set_order_payment_status(session: AsyncSession, order: Order, method: 
         session.add(OrderPayment(order_id=order.id, payment_method=PaymentMethod(method), amount=amount))
         order.payment_status = PaymentStatus.paid
     await session.flush()
-    order = await sync_order_payment_state(session, order)
-    await session.commit()
-    return await get_order(session, order.id)
+    return await sync_order_payment_state(session, order)
 
 
 async def dashboard_orders(session: AsyncSession, page: int = 0, limit: int = 10) -> list[Order]:

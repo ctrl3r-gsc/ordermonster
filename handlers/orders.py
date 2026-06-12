@@ -1,3 +1,4 @@
+import logging
 import re
 from decimal import Decimal, InvalidOperation
 from html import escape
@@ -39,6 +40,7 @@ from services.parser import parse_order_text
 router = Router()
 ORDER_CHAT_TYPES = (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP)
 DASHBOARD_PAGE_SIZE = 10
+logger = logging.getLogger(__name__)
 
 
 async def respond_to_message(message: Message, text: str, **kwargs):
@@ -225,7 +227,16 @@ def product_choice_keyboard(products, product_ids: list[int], item_index: int | 
             continue
         callback_data = f"pick_product:{item_index}:{product.id}" if item_index is not None else f"pick_product:{product.id}"
         rows.append([InlineKeyboardButton(text=product.name[:60], callback_data=callback_data)])
+    if item_index is not None:
+        rows.append([InlineKeyboardButton(text="Skip item", callback_data=f"skip_product:{item_index}")])
+    rows.append([InlineKeyboardButton(text="Back", callback_data="draft:back")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def product_clarification_text(unresolved: dict) -> str:
+    line_index = int(unresolved.get("line_index") or (int(unresolved.get("item_index") or 0) + 1))
+    original_text = unresolved.get("original_text") or unresolved.get("raw_product_text") or "item"
+    return f"Уточни товар для строки {line_index}:\n«{original_text}»"
 
 
 async def ask_product_clarification(message: Message, state: FSMContext, parsed: dict, products) -> bool:
@@ -239,7 +250,7 @@ async def ask_product_clarification(message: Message, state: FSMContext, parsed:
     await state.update_data(parsed=parsed)
     await respond_to_message(
         message,
-        "Какой именно товар ты имел в виду?",
+        product_clarification_text(first),
         reply_markup=product_choice_keyboard(products, similar_ids, item_index),
     )
     return True
@@ -255,7 +266,7 @@ async def edit_product_clarification(callback: CallbackQuery, state: FSMContext,
     await state.set_state(OrderFlow.selecting_product)
     await state.update_data(parsed=parsed)
     await callback.message.edit_text(
-        "Какой именно товар ты имел в виду?",
+        product_clarification_text(first),
         reply_markup=product_choice_keyboard(products, similar_ids, item_index),
     )
     return True
@@ -438,7 +449,9 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
     await state.clear()
     shops = await all_shops(session)
     products = await active_catalog(session)
-    parsed = await parse_order_text(message.text, [shop.name for shop in shops], catalog_for_parser(products))
+    parser_catalog = catalog_for_parser(products)
+    logger.debug("Active parser catalog: %s", parser_catalog)
+    parsed = await parse_order_text(message.text, [shop.name for shop in shops], parser_catalog)
     if not parsed.get("items"):
         await state.clear()
         await respond_to_message(message, "I could not find order items in that message.")
@@ -537,6 +550,43 @@ async def pick_product(callback: CallbackQuery, state: FSMContext, session: Asyn
     order = await create_order_from_parsed(session, parsed, shop, callback.from_user.id)
     await state.clear()
     await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(OrderFlow.selecting_product, F.data.startswith("skip_product:"))
+async def skip_product(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    item_index = int(callback.data.split(":", 1)[1])
+    data = await state.get_data()
+    parsed = data.get("parsed")
+    if not parsed:
+        await callback.answer("Order draft expired. Send the order again.", show_alert=True)
+        return
+    items = parsed.get("items", [])
+    if item_index < 0 or item_index >= len(items):
+        await callback.answer("Order item expired. Send the order again.", show_alert=True)
+        return
+    del items[item_index]
+    remaining_unresolved = [
+        unresolved
+        for unresolved in parsed.get("unresolved_products", [])
+        if int(unresolved.get("item_index") or 0) != item_index
+    ]
+    for unresolved in remaining_unresolved:
+        current_index = int(unresolved.get("item_index") or 0)
+        if current_index > item_index:
+            unresolved["item_index"] = current_index - 1
+    parsed["unresolved_products"] = remaining_unresolved
+    products = await active_catalog(session)
+    if await edit_product_clarification(callback, state, parsed, products):
+        await callback.answer()
+        return
+    await state.update_data(parsed=parsed)
+    await state.set_state(None)
+    await callback.message.edit_text(
+        draft_order_card_text(parsed),
+        reply_markup=draft_order_keyboard(),
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
@@ -706,6 +756,8 @@ async def apply_payment_amount(callback: CallbackQuery, state: FSMContext, sessi
     order = await get_order(session, int(raw_order_id))
     if mode == "full":
         updated_order = await set_order_payment_status(session, order, method)
+        await session.commit()
+        updated_order = await get_order(session, updated_order.id)
         await callback.message.edit_text(
             order_card_text(updated_order),
             reply_markup=order_card_keyboard(updated_order),

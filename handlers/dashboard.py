@@ -25,6 +25,7 @@ from services.orders import (
 
 router = Router()
 ORDER_CHAT_TYPES = (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP)
+DASHBOARD_PAGE_SIZE = 10
 
 
 class ShopFlow(StatesGroup):
@@ -35,9 +36,6 @@ async def respond_to_message(message: Message, text: str, **kwargs):
     if message.chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
         return await message.reply(text, **kwargs)
     return await message.answer(text, **kwargs)
-
-
-DASHBOARD_PAGE_SIZE = 10
 
 
 def dashboard_summary_text(orders, page: int = 0, counts: dict[str, int] | None = None) -> str:
@@ -87,14 +85,14 @@ def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineK
         pagination_row.append(InlineKeyboardButton(text="Next ➡️", callback_data=f"dash_page:{page + 1}"))
     if pagination_row:
         rows.append(pagination_row)
-    rows.append([InlineKeyboardButton(text="🏪 Магазины", callback_data="shops:list")])
+    rows.append([InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def dashboard_empty_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🏪 Магазины", callback_data="shops:list")],
+            [InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")],
         ]
     )
 
@@ -118,8 +116,8 @@ def shop_details_keyboard(shop_id: int) -> InlineKeyboardMarkup:
 def shop_delete_confirmation_keyboard(shop_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"shops:confirm_delete:{shop_id}")],
-            [InlineKeyboardButton(text="🔙 Отмена", callback_data=f"shops:cancel_delete:{shop_id}")],
+            [InlineKeyboardButton(text="✅ Yes, delete", callback_data=f"shops:confirm_delete:{shop_id}")],
+            [InlineKeyboardButton(text="🔙 Cancel", callback_data=f"shops:cancel_delete:{shop_id}")],
         ]
     )
 
@@ -130,24 +128,24 @@ async def shop_order_count(session: AsyncSession, shop_id: int) -> int:
 
 async def shop_details_text(session: AsyncSession, shop: Shop) -> str:
     order_count = await shop_order_count(session, shop.id)
-    address = escape(shop.address) if shop.address else "не указан"
+    address = escape(shop.address) if shop.address else "not set"
     return "\n".join(
         [
             f"🏪 <b>{escape(shop.name)}</b>",
-            f"📍 Адрес: {address}",
-            f"📦 Заказов: <b>{order_count}</b>",
+            f"📍 Address: {address}",
+            f"📦 Orders: <b>{order_count}</b>",
         ]
     )
 
 
 async def render_shops_list(callback: CallbackQuery, session: AsyncSession, prefix: str | None = None) -> None:
     shops = await all_shops(session)
-    text = "🏪 <b>Магазины</b>"
+    text = "🏪 <b>Shops</b>"
     if prefix:
         text = f"{escape(prefix)}\n\n{text}"
     if not shops:
         await callback.message.edit_text(
-            f"{text}\n\nСписок магазинов пуст.",
+            f"{text}\n\nShop list is empty.",
             reply_markup=dashboard_empty_keyboard(),
             parse_mode="HTML",
         )
@@ -196,16 +194,16 @@ async def dashboard_command(message: Message, session: AsyncSession) -> None:
         )
     except Exception:
         logging.exception("Dashboard command failed")
-        await respond_to_message(message, "Ошибка загрузки дашборда. Попробуйте позже.")
+        await respond_to_message(message, "Dashboard failed to load. Try again later.")
 
 
 @router.message(Command("shops"), F.chat.type.in_(ORDER_CHAT_TYPES))
 async def shops_command(message: Message, session: AsyncSession) -> None:
     shops = await all_shops(session)
     if not shops:
-        await respond_to_message(message, "🏪 <b>Магазины</b>\n\nСписок магазинов пуст.", parse_mode="HTML")
+        await respond_to_message(message, "🏪 <b>Shops</b>\n\nShop list is empty.", parse_mode="HTML")
         return
-    await respond_to_message(message, "🏪 <b>Магазины</b>", reply_markup=shops_keyboard(shops), parse_mode="HTML")
+    await respond_to_message(message, "🏪 <b>Shops</b>", reply_markup=shops_keyboard(shops), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "shops:list")
@@ -243,7 +241,7 @@ async def shop_open(callback: CallbackQuery, session: AsyncSession) -> None:
 
     shop = await session.get(Shop, shop_id)
     if shop is None:
-        await callback.answer("Магазин не найден.", show_alert=True)
+        await callback.answer("Shop not found.", show_alert=True)
         await render_shops_list(callback, session)
         return
 
@@ -313,13 +311,13 @@ async def shop_delete(callback: CallbackQuery, session: AsyncSession) -> None:
 
     shop = await session.get(Shop, shop_id)
     if shop is None:
-        await callback.answer("Магазин не найден.", show_alert=True)
+        await callback.answer("Shop not found.", show_alert=True)
         await render_shops_list(callback, session)
         return
 
     await callback.message.edit_text(
-        f"⚠️ Вы уверены, что хотите удалить магазин <b>{escape(shop.name)}</b>? "
-        "Все связанные с ним заказы также будут затронуты!",
+        f"⚠️ Delete shop <b>{escape(shop.name)}</b>? "
+        "All related orders will also be affected.",
         reply_markup=shop_delete_confirmation_keyboard(shop.id),
         parse_mode="HTML",
     )
@@ -337,7 +335,7 @@ async def shop_cancel_delete(callback: CallbackQuery, session: AsyncSession) -> 
 
     shop = await session.get(Shop, shop_id)
     if shop is None:
-        await callback.answer("Магазин не найден.", show_alert=True)
+        await callback.answer("Shop not found.", show_alert=True)
         await render_shops_list(callback, session)
         return
 
@@ -360,7 +358,7 @@ async def shop_confirm_delete(callback: CallbackQuery, session: AsyncSession) ->
 
     shop = await session.get(Shop, shop_id)
     if shop is None:
-        await callback.answer("Магазин не найден.", show_alert=True)
+        await callback.answer("Shop not found.", show_alert=True)
         await render_shops_list(callback, session)
         return
 
@@ -370,11 +368,11 @@ async def shop_confirm_delete(callback: CallbackQuery, session: AsyncSession) ->
     except Exception:
         logging.exception("Shop deletion failed")
         await session.rollback()
-        await callback.answer("Ошибка удаления магазина.", show_alert=True)
+        await callback.answer("Shop deletion failed.", show_alert=True)
         return
 
-    await render_shops_list(callback, session, prefix=f"Магазин {shop_name} успешно удален!")
-    await callback.answer(f"Магазин {shop_name} успешно удален!", show_alert=True)
+    await render_shops_list(callback, session, prefix=f"Shop {shop_name} was deleted.")
+    await callback.answer(f"Shop {shop_name} was deleted.", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("dash_order:"))
@@ -397,4 +395,4 @@ async def dashboard_open_order(callback: CallbackQuery, session: AsyncSession) -
         await callback.answer()
     except Exception:
         logging.exception("Dashboard order open handler failed")
-        await callback.answer("Ошибка обработки запроса.", show_alert=True)
+        await callback.answer("Request failed.", show_alert=True)

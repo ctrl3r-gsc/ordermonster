@@ -15,7 +15,7 @@
     "potency_type": "THC",
     "sku": "ultimate-gummies-green-apple-250mg",
     "price": 170.00,
-    "aliases": ["gummies 250", "250mg gummies", "green apple 250", "ultimate green apple", "gummies green apple", "ultimate gummies 250"]
+    "aliases": ["gummies 250", "gummies 250mg", "250 gummies", "250mg gummies", "green apple 250", "ultimate green apple", "gummies green apple", "ultimate gummies 250"]
   },
   {
     "name": "ULTIMATE GUMMIES STRAWBERRY 500mg",
@@ -42,7 +42,7 @@
     "potency_type": "hash",
     "sku": "x-hash-gummies-blackcurrant-350mg",
     "price": 230.00,
-    "aliases": ["x hash 350", "x-hash 350", "blackcurrant 350", "black currant 350", "x hash blackcurrant"]
+    "aliases": ["x hash 350", "x-hash 350", "gummies 350", "350 gummies", "gummies 350mg", "blackcurrant 350", "black currant 350", "x hash blackcurrant"]
   },
   {
     "name": "X-HASH GUMMIES WATERMELON 600mg",
@@ -60,7 +60,7 @@
     "potency_type": "rosin",
     "sku": "rosin-gummies-green-apple-250mg",
     "price": 300.00,
-    "aliases": ["rosin 250", "rosin gummies 250", "rosin green apple", "rosin green apple 250"]
+    "aliases": ["rosin", "gummies rosin", "rosin gummies", "rosin gummy", "apple rosin", "green apple rosin", "rosin 250", "rosin gummies 250", "rosin green apple", "rosin green apple 250"]
   },
   {
     "name": "BREAKFAST COOKIES 100mg",
