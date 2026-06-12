@@ -26,7 +26,12 @@ async def main() -> None:
     bot = Bot(token=settings.bot_token)
 
     async def on_startup(*_):
-        await bot.set_my_commands([BotCommand(command="dashboard", description="Show dashboard and manage orders")])
+        await bot.set_my_commands(
+            [
+                BotCommand(command="dashboard", description="Show dashboard and manage orders"),
+                BotCommand(command="statistics", description="Show product sales statistics"),
+            ]
+        )
 
     dp = Dispatcher(storage=MemoryStorage(), fsm_strategy=FSMStrategy.USER_IN_CHAT)
     dp.startup.register(on_startup)
