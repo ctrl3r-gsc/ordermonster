@@ -95,7 +95,7 @@ def format_new_order_notification(order: Order, created_by_user: User | None = N
 def new_order_notification_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="рџ“Љ Dashboard", callback_data=NOTIFICATION_DASHBOARD_CALLBACK)],
+            [InlineKeyboardButton(text="\U0001F4CA Dashboard", callback_data=NOTIFICATION_DASHBOARD_CALLBACK)],
         ]
     )
 
