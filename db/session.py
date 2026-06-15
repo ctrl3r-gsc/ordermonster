@@ -16,6 +16,7 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS display_number INTEGER"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_display_number ON orders (display_number)"))
+        await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS notification_sent_at TIMESTAMPTZ NULL"))
         await conn.execute(text("UPDATE orders SET display_number = id WHERE display_number IS NULL"))
 
 

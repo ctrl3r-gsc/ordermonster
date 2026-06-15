@@ -3,7 +3,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from html import escape
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -35,6 +35,7 @@ from services.orders import (
     remaining_amount,
     sanitize_shop_name,
 )
+from services.notifications import send_new_order_notification
 from services.parser import parse_order_text
 
 router = Router()
@@ -468,11 +469,11 @@ async def catalog_cb(callback: CallbackQuery, session: AsyncSession) -> None:
 
 
 @router.message(StateFilter(None), F.text, ~F.text.startswith("/"), F.chat.type.in_(ORDER_CHAT_TYPES))
-async def parse_new_order(message: Message, state: FSMContext, session: AsyncSession) -> None:
-    await process_order_text(message, state, session)
+async def parse_new_order(message: Message, state: FSMContext, session: AsyncSession, bot: Bot) -> None:
+    await process_order_text(message, state, session, bot)
 
 
-async def process_order_text(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def process_order_text(message: Message, state: FSMContext, session: AsyncSession, bot: Bot) -> None:
     await state.clear()
     shops = await all_shops(session)
     products = await active_catalog(session)
@@ -515,6 +516,7 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
             reply_markup=order_card_keyboard(order),
             parse_mode="HTML",
         )
+        await send_new_order_notification(bot, session, order.id, message.from_user)
         return
     await respond_to_message(
         message,
@@ -525,7 +527,7 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
 
 
 @router.callback_query(OrderFlow.selecting_product, F.data.startswith("pick_product:"))
-async def pick_product(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+async def pick_product(callback: CallbackQuery, state: FSMContext, session: AsyncSession, bot: Bot) -> None:
     parts = callback.data.split(":")
     if len(parts) >= 3:
         item_index = int(parts[1])
@@ -602,6 +604,7 @@ async def pick_product(callback: CallbackQuery, state: FSMContext, session: Asyn
     order = await create_order_from_parsed(session, parsed, shop, callback.from_user.id)
     await state.clear()
     await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
+    await send_new_order_notification(bot, session, order.id, callback.from_user)
     await callback.answer()
 
 
@@ -673,7 +676,7 @@ async def draft_back(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data.startswith("draft:shop:"))
-async def draft_choose_existing_shop(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+async def draft_choose_existing_shop(callback: CallbackQuery, state: FSMContext, session: AsyncSession, bot: Bot) -> None:
     data = await state.get_data()
     parsed = data.get("parsed")
     if not parsed:
@@ -688,6 +691,7 @@ async def draft_choose_existing_shop(callback: CallbackQuery, state: FSMContext,
     order = await create_order_from_parsed(session, parsed, shop, callback.from_user.id)
     await state.clear()
     await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
+    await send_new_order_notification(bot, session, order.id, callback.from_user)
     await callback.answer()
 
 
@@ -703,7 +707,7 @@ async def draft_add_new_shop(callback: CallbackQuery, state: FSMContext) -> None
 
 
 @router.message(OrderFlow.setting_shop, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
-async def set_draft_shop(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def set_draft_shop(message: Message, state: FSMContext, session: AsyncSession, bot: Bot) -> None:
     data = await state.get_data()
     parsed = data.get("parsed")
     if not parsed:
@@ -726,6 +730,7 @@ async def set_draft_shop(message: Message, state: FSMContext, session: AsyncSess
         reply_markup=order_card_keyboard(order),
         parse_mode="HTML",
     )
+    await send_new_order_notification(bot, session, order.id, message.from_user)
 
 
 @router.callback_query(F.data.startswith("add_addr:"))

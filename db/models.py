@@ -46,6 +46,16 @@ class CompanyTransactionPaymentMethod(str, enum.Enum):
     unknown = "unknown"
 
 
+class BotSetting(Base):
+    __tablename__ = "bot_settings"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Shop(Base):
     __tablename__ = "shops"
 
@@ -103,6 +113,7 @@ class Order(Base):
     )
     tracking_number: Mapped[str | None] = mapped_column(Text)
     total_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    notification_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

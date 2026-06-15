@@ -35,6 +35,10 @@ async def main() -> None:
                 BotCommand(command="followups", description="Shops that need follow-up"),
                 BotCommand(command="slow_products", description="Product performance and slow movers"),
                 BotCommand(command="forecast", description="Sales forecast"),
+                BotCommand(command="set_notifications_here", description="Enable order notifications for this chat"),
+                BotCommand(command="notification_status", description="Show order notification settings"),
+                BotCommand(command="notification_test", description="Send a test order notification"),
+                BotCommand(command="disable_notifications", description="Disable order notifications"),
             ]
         )
 
