@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import DeliveryStatus, Order, Shop
 from services.catalog import active_catalog, all_catalog, catalog_for_parser
 from services.orders import (
-    add_payment,
+    add_payment_to_order,
     all_shops,
     create_order_from_parsed,
     dashboard_has_next_page,
@@ -30,7 +30,7 @@ from services.orders import (
     match_existing_shop_name,
     paid_amount,
     sanitize_shop_input,
-    set_order_payment_status,
+    set_order_payment_status_by_id,
     update_item_unit_price,
     remaining_amount,
     sanitize_shop_name,
@@ -805,11 +805,12 @@ async def choose_payment_method_first(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("pay_apply:"))
 async def apply_payment_amount(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     _, mode, raw_order_id, method = callback.data.split(":")
-    order = await get_order(session, int(raw_order_id))
+    order_id = int(raw_order_id)
     if mode == "full":
-        updated_order = await set_order_payment_status(session, order, method)
+        await set_order_payment_status_by_id(session, order_id, method)
         await session.commit()
-        updated_order = await get_order(session, updated_order.id)
+        session.expire_all()
+        updated_order = await get_order(session, order_id)
         await callback.message.edit_text(
             order_card_text(updated_order),
             reply_markup=order_card_keyboard(updated_order),
@@ -817,7 +818,7 @@ async def apply_payment_amount(callback: CallbackQuery, state: FSMContext, sessi
         )
         await callback.answer()
         return
-    await state.update_data(order_id=order.id, method=method)
+    await state.update_data(order_id=order_id, method=method)
     await state.set_state(OrderFlow.entering_split_amount)
     await callback.message.edit_text("Type payment amount.")
     await callback.answer()
@@ -833,7 +834,7 @@ async def enter_split_amount(message: Message, state: FSMContext, session: Async
         await respond_to_message(message, "Enter a positive numeric amount.")
         return
     data = await state.get_data()
-    order = await get_order(session, int(data["order_id"]))
+    order_id = int(data["order_id"])
     method = data.get("method")
     if not method:
         await respond_to_message(message, "Payment method expired. Open Edit Payments again.")
@@ -843,10 +844,10 @@ async def enter_split_amount(message: Message, state: FSMContext, session: Async
         await state.clear()
         await respond_to_message(message, "Payment amount was not applied.")
         return
-    updated_order = await add_payment(session, order, method, amount)
+    await add_payment_to_order(session, order_id, method, amount)
     await session.commit()
-    await session.refresh(updated_order)
-    updated_order = await get_order(session, updated_order.id)
+    session.expire_all()
+    updated_order = await get_order(session, order_id)
     await respond_to_message(message, order_card_text(updated_order), reply_markup=order_card_keyboard(updated_order), parse_mode="HTML")
     await state.clear()
 

@@ -495,6 +495,11 @@ async def add_payment(session: AsyncSession, order: Order, method: str, amount: 
     return await sync_order_payment_state(session, order)
 
 
+async def add_payment_to_order(session: AsyncSession, order_id: int, method: str, amount: Decimal) -> Order:
+    order = await get_order(session, order_id)
+    return await add_payment(session, order, method, amount)
+
+
 async def set_order_payment_status(session: AsyncSession, order: Order, method: str | None) -> Order:
     await session.execute(delete(OrderPayment).where(OrderPayment.order_id == order.id))
     if method is None:
@@ -505,6 +510,11 @@ async def set_order_payment_status(session: AsyncSession, order: Order, method: 
         order.payment_status = PaymentStatus.paid
     await session.flush()
     return await sync_order_payment_state(session, order)
+
+
+async def set_order_payment_status_by_id(session: AsyncSession, order_id: int, method: str | None) -> Order:
+    order = await get_order(session, order_id)
+    return await set_order_payment_status(session, order, method)
 
 
 async def dashboard_orders(session: AsyncSession, page: int = 0, limit: int = 10) -> list[Order]:
