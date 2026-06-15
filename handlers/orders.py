@@ -218,6 +218,33 @@ def draft_shop_choice_keyboard(shops: list[Shop]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def prioritized_shop_choices(shops: list[Shop], candidate_names: list[str] | None = None, limit: int = 10) -> list[Shop]:
+    candidates = [sanitize_shop_name(candidate) for candidate in candidate_names or []]
+    prioritized: list[Shop] = []
+    seen: set[int] = set()
+    for candidate in candidates:
+        matched = match_existing_shop_name(candidate, shops)
+        if matched and matched.id not in seen:
+            prioritized.append(matched)
+            seen.add(matched.id)
+    for shop in shops:
+        if shop.id not in seen:
+            prioritized.append(shop)
+            seen.add(shop.id)
+        if len(prioritized) >= limit:
+            break
+    return prioritized
+
+
+async def ask_shop_clarification(message: Message, state: FSMContext, parsed: dict, shops: list[Shop]) -> None:
+    await state.set_data({"parsed": parsed})
+    await respond_to_message(
+        message,
+        "Which shop is this order for?",
+        reply_markup=draft_shop_choice_keyboard(prioritized_shop_choices(shops, parsed.get("shop_candidates"))),
+    )
+
+
 def product_choice_keyboard(products, product_ids: list[int], item_index: int | None = None) -> InlineKeyboardMarkup:
     by_id = {product.id: product for product in products}
     rows = []
@@ -459,6 +486,9 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
     if await ask_product_clarification(message, state, parsed, products):
         return
     await state.set_data({"parsed": parsed})
+    if parsed.get("needs_shop_clarification"):
+        await ask_shop_clarification(message, state, parsed, shops)
+        return
     shop_name = (parsed.get("shop_name") or "").upper().strip()
     shop_name = sanitize_shop_name(shop_name)
     shop_name, parsed["address"] = sanitize_shop_input(shop_name, parsed.get("address"), parsed.get("phone_number"))
@@ -466,14 +496,17 @@ async def process_order_text(message: Message, state: FSMContext, session: Async
     if shop_name:
         parsed["shop_name"] = shop_name
         matched_shop = match_existing_shop_name(shop_name, shops)
-        shop = matched_shop or await get_or_create_shop(
-            session,
-            shop_name,
-            parsed.get("address"),
-            parsed.get("phone_number"),
-        )
-        if matched_shop:
-            parsed["shop_name"] = matched_shop.name
+        if not matched_shop:
+            parsed["shop_name"] = None
+            await respond_to_message(
+                message,
+                draft_order_card_text(parsed),
+                reply_markup=draft_order_keyboard(),
+                parse_mode="HTML",
+            )
+            return
+        shop = matched_shop
+        parsed["shop_name"] = matched_shop.name
         order = await create_order_from_parsed(session, parsed, shop, message.from_user.id)
         await state.clear()
         await respond_to_message(
@@ -529,6 +562,15 @@ async def pick_product(callback: CallbackQuery, state: FSMContext, session: Asyn
         await callback.answer()
         return
     shops = await all_shops(session)
+    if parsed.get("needs_shop_clarification"):
+        await state.set_data({"parsed": parsed})
+        await state.set_state(None)
+        await callback.message.edit_text(
+            "Which shop is this order for?",
+            reply_markup=draft_shop_choice_keyboard(prioritized_shop_choices(shops, parsed.get("shop_candidates"))),
+        )
+        await callback.answer()
+        return
     shop_name = sanitize_shop_name((parsed.get("shop_name") or "").upper().strip())
     shop_name, parsed["address"] = sanitize_shop_input(shop_name, parsed.get("address"), parsed.get("phone_number"))
     shop_name = sanitize_shop_name(shop_name)
@@ -544,9 +586,19 @@ async def pick_product(callback: CallbackQuery, state: FSMContext, session: Asyn
         return
     parsed["shop_name"] = shop_name
     matched_shop = match_existing_shop_name(shop_name, shops)
-    shop = matched_shop or await get_or_create_shop(session, shop_name, parsed.get("address"), parsed.get("phone_number"))
-    if matched_shop:
-        parsed["shop_name"] = matched_shop.name
+    if not matched_shop:
+        parsed["shop_name"] = None
+        await state.set_data({"parsed": parsed})
+        await state.set_state(None)
+        await callback.message.edit_text(
+            draft_order_card_text(parsed),
+            reply_markup=draft_order_keyboard(),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+    shop = matched_shop
+    parsed["shop_name"] = matched_shop.name
     order = await create_order_from_parsed(session, parsed, shop, callback.from_user.id)
     await state.clear()
     await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")

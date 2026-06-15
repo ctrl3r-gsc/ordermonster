@@ -4,12 +4,17 @@ import re
 from difflib import SequenceMatcher
 from typing import Literal
 
-from google import genai
-from google.genai import types
 from pydantic import BaseModel, Field, field_validator
 
 from config import get_settings
 from services.orders import sanitize_shop_name
+
+try:
+    from google import genai
+    from google.genai import types
+except ImportError:
+    genai = None
+    types = None
 
 
 CatalogItem = Literal[
@@ -70,6 +75,9 @@ class OrderItem(BaseModel):
 
 class ExtractedOrder(BaseModel):
     shop_name: str | None = None
+    needs_shop_clarification: bool = False
+    shop_candidates: list[str] = Field(default_factory=list)
+    shop_resolution_reason: str | None = None
     address: str | None = None
     phone_number: str | None = None
     items: list[OrderItem] = Field(default_factory=list)
@@ -277,6 +285,21 @@ def _resolve_item_product(item: OrderItem, catalog_products: list[dict] | None, 
 
     if not query:
         return item, []
+
+    item_name_norm = _normalize_match_text(item.product_name)
+    if item_name_norm:
+        exact_name_matches = [
+            product
+            for product in catalog
+            if _normalize_match_text(product.get("name")) == item_name_norm
+            and (item.dosage is None or product.get("dosage") == item.dosage)
+        ]
+        if len(exact_name_matches) == 1:
+            product = exact_name_matches[0]
+            item.product_id = int(product["product_id"])
+            item.product_name = product.get("name")
+            item.dosage = product.get("dosage")
+            return item, []
 
     query_dosages = _extract_dosages(query)
     explicit_dosage = _has_explicit_dosage(query_source) or bool(query_dosages)
@@ -651,6 +674,223 @@ def _normalize_shop_name(value: str | None) -> str:
     if not value:
         return ""
     return re.sub(r"[^a-z0-9]+", "", _translit_ru(value.lower()))
+
+
+class ShopResolution(BaseModel):
+    shop_name: str | None = None
+    confidence: float = 0.0
+    needs_clarification: bool = False
+    candidates: list[str] = Field(default_factory=list)
+    reason: str = "no confident shop match"
+
+
+def _shop_candidate_text(value: str | None) -> str | None:
+    clean = _clean_shop_candidate(value)
+    if not clean:
+        return None
+    clean = re.sub(r"https?://\S+|(?:maps\.app\.goo\.gl|goo\.gl|google\.com/maps)/?\S*", " ", clean, flags=re.I)
+    clean = re.sub(r"\b\d{5,}\b", " ", clean)
+    clean = QUANTITY_RE.sub(" ", clean)
+    clean = re.sub(r"\b(?:cash|paid|bank|transfer|transaction|card|total|mobile|phone|tel|contact)\b.*$", " ", clean, flags=re.I)
+    clean = re.sub(r"\s+", " ", clean).strip(" ,.;:-")
+    if not clean:
+        return None
+    tokens = re.findall(r"[a-z\u0430-\u044f\u04510-9]+", clean.lower(), flags=re.I)
+    if not tokens or len(tokens) > 5 or len(clean) > 60:
+        return None
+    product_tokens = _word_tokens(clean) & (GENERIC_FAMILY_WORDS | MATCH_STOPWORDS | {"mg", "thc"})
+    if product_tokens and len(product_tokens) >= max(1, len(_word_tokens(clean)) - 1):
+        return None
+    return clean
+
+
+def _candidate_after_destination_marker(text: str) -> list[str]:
+    patterns = [
+        r"\b(?:send\s+to|deliver\s+to|delivery\s+to|to|too|for|at|shop|store)\s+([a-zA-Z\u0430-\u044f\u0410-\u042f\u0451\u04010-9 ._&'-]{2,60})",
+    ]
+    candidates: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.I):
+            value = re.split(
+                r"[,.;\n]|\s+\b(?:cash|paid|bank|transfer|transaction|card|total|mobile|phone|tel|contact|address)\b",
+                match.group(1),
+                maxsplit=1,
+                flags=re.I,
+            )[0]
+            clean = _shop_candidate_text(value)
+            if clean:
+                candidates.append(clean)
+    return candidates
+
+
+def _first_item_line_index(items: list[OrderItem]) -> int | None:
+    indexes = [item.line_index for item in items if item.line_index is not None]
+    return min(indexes) if indexes else None
+
+
+def _last_item_line_index(items: list[OrderItem]) -> int | None:
+    indexes = [item.line_index for item in items if item.line_index is not None]
+    return max(indexes) if indexes else None
+
+
+def _line_has_item(line_index: int, items: list[OrderItem]) -> bool:
+    return any(item.line_index == line_index for item in items)
+
+
+def _order_aware_shop_candidates(
+    raw_text: str,
+    items: list[OrderItem],
+    parser_shop_name: str | None = None,
+) -> list[tuple[str, str]]:
+    candidates: list[tuple[str, str]] = []
+    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    first_item_line = _first_item_line_index(items)
+    last_item_line = _last_item_line_index(items)
+
+    for candidate in _candidate_after_destination_marker(raw_text):
+        candidates.append((candidate, "destination"))
+
+    if last_item_line is not None:
+        for line_index, line in enumerate(lines):
+            if line_index > last_item_line:
+                clean = _shop_candidate_text(line)
+                if clean:
+                    candidates.append((clean, "after_items"))
+
+    for item in items:
+        if item.original_text:
+            trailing = _extract_trailing_shop_from_order_line(item.original_text)
+            clean = _shop_candidate_text(trailing)
+            if clean:
+                candidates.append((clean, "item_trailing"))
+        if item.line_index is not None and 0 <= item.line_index < len(lines):
+            for candidate in _candidate_after_destination_marker(lines[item.line_index]):
+                candidates.append((candidate, "destination"))
+            trailing = _extract_trailing_shop_from_order_line(lines[item.line_index])
+            clean = _shop_candidate_text(trailing)
+            if clean:
+                candidates.append((clean, "item_trailing"))
+
+    if parser_shop_name:
+        clean = _shop_candidate_text(parser_shop_name)
+        if clean:
+            source = "item_trailing" if items and first_item_line is None else "parser"
+            candidates.append((clean, source))
+
+    for line_index, line in enumerate(lines):
+        if _line_has_item(line_index, items):
+            continue
+        if first_item_line is not None and line_index < first_item_line:
+            continue
+        clean = _shop_candidate_text(line)
+        if clean:
+            candidates.append((clean, "line_after_order"))
+
+    seen: set[tuple[str, str]] = set()
+    unique: list[tuple[str, str]] = []
+    for candidate, source in candidates:
+        key = (_normalize_shop_name(candidate), source)
+        if key[0] and key not in seen:
+            seen.add(key)
+            unique.append((candidate, source))
+    return unique
+
+
+def _shop_match_score(candidate: str, shop: str, source: str) -> float:
+    normalized = _normalize_shop_name(candidate)
+    shop_normalized = _normalize_shop_name(shop)
+    if not normalized or not shop_normalized:
+        return 0.0
+    strong_source = source in {"destination", "after_items", "item_trailing", "line_after_order"}
+    if normalized == shop_normalized:
+        return 1.0 if strong_source else 0.94
+    if len(normalized) >= 4 and shop_normalized.startswith(normalized):
+        return 0.91 if strong_source else 0.82
+    if len(shop_normalized) >= 4 and normalized.startswith(shop_normalized):
+        return 0.89 if strong_source else 0.80
+    if len(normalized) >= 4 and len(shop_normalized) >= 4 and (normalized in shop_normalized or shop_normalized in normalized):
+        return 0.88 if strong_source else 0.78
+    fuzzy = SequenceMatcher(None, normalized, shop_normalized).ratio()
+    if strong_source:
+        return fuzzy
+    return fuzzy * 0.92
+
+
+def resolve_shop_from_order_text(
+    raw_text: str,
+    parsed_items: list[OrderItem],
+    existing_shops: list[str] | None,
+    parser_shop_name: str | None = None,
+) -> ShopResolution:
+    if not existing_shops:
+        return ShopResolution(reason="no shops loaded")
+
+    scored: list[tuple[float, str, str, str]] = []
+    for candidate, source in _order_aware_shop_candidates(raw_text, parsed_items, parser_shop_name):
+        for shop in existing_shops:
+            score = _shop_match_score(candidate, shop, source)
+            if score >= 0.70:
+                scored.append((score, shop, candidate, source))
+
+    if not scored:
+        return ShopResolution(reason="no order-aware candidate matched an existing shop")
+
+    scored.sort(key=lambda row: row[0], reverse=True)
+    unique_best: list[tuple[float, str, str, str]] = []
+    seen_shops: set[str] = set()
+    for row in scored:
+        key = _normalize_shop_name(row[1])
+        if key in seen_shops:
+            continue
+        seen_shops.add(key)
+        unique_best.append(row)
+
+    best_score, best_shop, best_candidate, best_source = unique_best[0]
+    clarification_candidates = [shop for score, shop, _, _ in unique_best[:5] if score >= 0.75]
+    candidate_norm = _normalize_shop_name(best_candidate)
+    ambiguous_prefix = [
+        shop
+        for shop in existing_shops
+        if _normalize_shop_name(shop) != _normalize_shop_name(best_shop)
+        and candidate_norm
+        and _normalize_shop_name(shop).startswith(candidate_norm)
+    ]
+    second_score = unique_best[1][0] if len(unique_best) > 1 else 0.0
+    second_source = unique_best[1][3] if len(unique_best) > 1 else ""
+    close_non_parser_match = second_source != "parser" and second_score >= 0.75 and best_score - second_score < 0.08
+    if ambiguous_prefix or close_non_parser_match:
+        choices = list(dict.fromkeys([best_shop, *ambiguous_prefix, *clarification_candidates]))
+        return ShopResolution(
+            needs_clarification=True,
+            confidence=best_score,
+            candidates=choices[:5],
+            reason=f"ambiguous shop candidate '{best_candidate}'",
+        )
+
+    if best_score >= 0.88 and best_source in {"destination", "after_items", "item_trailing", "line_after_order"}:
+        return ShopResolution(
+            shop_name=best_shop,
+            confidence=best_score,
+            candidates=clarification_candidates,
+            reason=f"matched '{best_candidate}' from {best_source}",
+        )
+
+    if best_score >= 0.94 and best_source == "parser":
+        return ShopResolution(
+            shop_name=best_shop,
+            confidence=best_score,
+            candidates=clarification_candidates,
+            reason=f"validated parser shop '{best_candidate}'",
+        )
+
+    if best_score >= 0.75:
+        return ShopResolution(
+            needs_clarification=True,
+            confidence=best_score,
+            candidates=clarification_candidates,
+            reason=f"weak shop candidate '{best_candidate}'",
+        )
+    return ShopResolution(reason="no confident shop match")
 
 
 def _best_existing_shop_match(candidate: str | None, existing_shops: list[str] | None) -> str | None:
@@ -1158,14 +1398,13 @@ def fallback_parse_order_text(text: str, existing_shops: list[str] | None = None
                     ):
                         shop_name = _extract_trailing_shop_from_order_line(segment)
 
-    resolved_shop_name = (
-        _best_existing_shop_match(shop_name, existing_shops)
-        or _best_shop_mentioned_in_text(text, existing_shops)
-        or shop_name
-    )
+    shop_resolution = resolve_shop_from_order_text(text, items, existing_shops, shop_name)
 
     return ExtractedOrder(
-        shop_name=_sanitize_parser_shop_name(resolved_shop_name),
+        shop_name=_sanitize_parser_shop_name(shop_resolution.shop_name),
+        needs_shop_clarification=shop_resolution.needs_clarification,
+        shop_candidates=shop_resolution.candidates,
+        shop_resolution_reason=shop_resolution.reason,
         address=_extract_address(text),
         phone_number=_extract_phone_number(text),
         items=items,
@@ -1228,15 +1467,17 @@ def _merge_with_fallback(
     fallback.shop_name = _sanitize_parser_shop_name(fallback.shop_name)
     if _is_bad_shop_name(extracted.shop_name, raw_text):
         extracted.shop_name = None
-    matched_shop = _best_existing_shop_match(extracted.shop_name, existing_shops) or _best_shop_mentioned_in_text(
-        raw_text, existing_shops
-    )
-    if matched_shop:
-        extracted.shop_name = sanitize_shop_name(matched_shop)
+    shop_resolution = resolve_shop_from_order_text(raw_text, fallback.items or extracted.items, existing_shops, extracted.shop_name)
+    extracted.shop_name = sanitize_shop_name(shop_resolution.shop_name) if shop_resolution.shop_name else None
+    extracted.needs_shop_clarification = shop_resolution.needs_clarification
+    extracted.shop_candidates = shop_resolution.candidates
+    extracted.shop_resolution_reason = shop_resolution.reason
     if fallback.items and (not extracted.items or len(fallback.items) > len(extracted.items)):
         extracted.items = fallback.items
-    if extracted.shop_name is None and fallback.shop_name and not _is_bad_shop_name(fallback.shop_name, raw_text):
-        extracted.shop_name = sanitize_shop_name(fallback.shop_name)
+    if extracted.shop_name is None:
+        extracted.needs_shop_clarification = extracted.needs_shop_clarification or fallback.needs_shop_clarification
+        extracted.shop_candidates = extracted.shop_candidates or fallback.shop_candidates
+        extracted.shop_resolution_reason = extracted.shop_resolution_reason or fallback.shop_resolution_reason
     extracted.phone_number = _clean_optional_text(extracted.phone_number) or _clean_optional_text(fallback.phone_number)
     extracted.address = _clean_optional_text(extracted.address) or _clean_optional_text(fallback.address)
     extracted.address = _strip_phone_from_address(extracted.address, extracted.phone_number)
@@ -1257,7 +1498,7 @@ async def parse_order_text(
     settings = get_settings()
     api_key = os.getenv("GEMINI_API_KEY")
     fallback = fallback_parse_order_text(text, existing_shops)
-    if not api_key:
+    if not api_key or genai is None or types is None:
         resolved = resolve_products_for_order(_finalize_extracted_order(fallback), catalog_products, text)
         return resolved.model_dump(mode="json")
 
