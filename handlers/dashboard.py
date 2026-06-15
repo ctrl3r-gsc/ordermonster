@@ -2,7 +2,7 @@ import logging
 import re
 from html import escape
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -97,6 +97,24 @@ def dashboard_empty_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+async def build_dashboard_message(session: AsyncSession, page: int = 0) -> tuple[str, InlineKeyboardMarkup | None]:
+    page = max(page, 0)
+    orders = await dashboard_orders(session, page=page, limit=DASHBOARD_PAGE_SIZE)
+    if not orders:
+        return "No dashboard orders found.", dashboard_empty_keyboard()
+    has_next = await dashboard_has_next_page(session, page=page, limit=DASHBOARD_PAGE_SIZE)
+    counts = await dashboard_status_counts(session)
+    return (
+        dashboard_summary_text(orders, page=page, counts=counts),
+        dashboard_keyboard(orders, page=page, has_next=has_next),
+    )
+
+
+async def send_dashboard_to_chat(bot: Bot, session: AsyncSession, chat_id: int, page: int = 0) -> None:
+    text, reply_markup = await build_dashboard_message(session, page=page)
+    await bot.send_message(chat_id, text, reply_markup=reply_markup, parse_mode="HTML")
+
+
 def shops_keyboard(shops) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=shop.name[:40], callback_data=f"shops:open:{shop.id}")] for shop in shops]
     rows.append([InlineKeyboardButton(text="🔙 Dashboard", callback_data="shops:dashboard")])
@@ -155,18 +173,8 @@ async def render_shops_list(callback: CallbackQuery, session: AsyncSession, pref
 
 
 async def render_dashboard(callback: CallbackQuery, session: AsyncSession, page: int = 0) -> None:
-    page = max(page, 0)
-    orders = await dashboard_orders(session, page=page, limit=DASHBOARD_PAGE_SIZE)
-    has_next = await dashboard_has_next_page(session, page=page, limit=DASHBOARD_PAGE_SIZE)
-    counts = await dashboard_status_counts(session)
-    if not orders:
-        await callback.message.edit_text("No dashboard orders found.", reply_markup=dashboard_empty_keyboard())
-        return
-    await callback.message.edit_text(
-        dashboard_summary_text(orders, page=page, counts=counts),
-        reply_markup=dashboard_keyboard(orders, page=page, has_next=has_next),
-        parse_mode="HTML",
-    )
+    text, reply_markup = await build_dashboard_message(session, page=page)
+    await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode="HTML")
 
 
 async def delete_shop_with_orders(session: AsyncSession, shop_id: int) -> None:
@@ -181,18 +189,8 @@ async def delete_shop_with_orders(session: AsyncSession, shop_id: int) -> None:
 @router.message(Command("dashboard"), F.chat.type.in_(ORDER_CHAT_TYPES))
 async def dashboard_command(message: Message, session: AsyncSession) -> None:
     try:
-        orders = await dashboard_orders(session, page=0, limit=DASHBOARD_PAGE_SIZE)
-        has_next = await dashboard_has_next_page(session, page=0, limit=DASHBOARD_PAGE_SIZE)
-        counts = await dashboard_status_counts(session)
-        if not orders:
-            await respond_to_message(message, "No dashboard orders found.", reply_markup=dashboard_empty_keyboard())
-            return
-        await respond_to_message(
-            message,
-            dashboard_summary_text(orders, page=0, counts=counts),
-            reply_markup=dashboard_keyboard(orders, page=0, has_next=has_next),
-            parse_mode="HTML",
-        )
+        text, reply_markup = await build_dashboard_message(session, page=0)
+        await respond_to_message(message, text, reply_markup=reply_markup, parse_mode="HTML")
     except Exception:
         logging.exception("Dashboard command failed")
         await respond_to_message(message, "Dashboard failed to load. Try again later.")

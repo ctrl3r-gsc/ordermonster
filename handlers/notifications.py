@@ -3,11 +3,13 @@ import logging
 from aiogram import Bot, Router, F
 from aiogram.enums import ChatType
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
+from handlers.dashboard import send_dashboard_to_chat
 from services.notifications import (
+    NOTIFICATION_DASHBOARD_CALLBACK,
     disable_order_notifications,
     get_notification_chat_id,
     send_notification_test,
@@ -62,6 +64,18 @@ async def notification_test(message: Message, bot: Bot, session: AsyncSession) -
         await message.reply("No notification chat is configured. Run /set_notifications_here in the group.")
         return
     await message.reply("Test notification sent.")
+
+
+@router.callback_query(F.data == NOTIFICATION_DASHBOARD_CALLBACK)
+async def notification_dashboard(callback: CallbackQuery, bot: Bot, session: AsyncSession) -> None:
+    await callback.answer()
+    if callback.message is None:
+        return
+    try:
+        await send_dashboard_to_chat(bot, session, callback.message.chat.id)
+    except Exception:
+        logger.exception("Failed to send dashboard from notification callback")
+        await callback.message.answer("Dashboard failed to load. Try again later.")
 
 
 @router.message(Command("disable_notifications"))

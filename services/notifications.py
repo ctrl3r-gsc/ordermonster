@@ -4,7 +4,7 @@ from decimal import Decimal
 from html import escape
 
 from aiogram import Bot
-from aiogram.types import User
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, User
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,7 @@ from services.orders import display_order_number, get_order, item_subtotal, item
 
 logger = logging.getLogger(__name__)
 ORDER_NOTIFICATIONS_CHAT_ID_KEY = "order_notifications_chat_id"
+NOTIFICATION_DASHBOARD_CALLBACK = "notify:dashboard"
 
 
 async def get_notification_chat_id(session: AsyncSession) -> int | None:
@@ -91,6 +92,14 @@ def format_new_order_notification(order: Order, created_by_user: User | None = N
     return "\n".join(lines)
 
 
+def new_order_notification_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="рџ“Љ Dashboard", callback_data=NOTIFICATION_DASHBOARD_CALLBACK)],
+        ]
+    )
+
+
 async def send_notification_test(bot: Bot, session: AsyncSession) -> bool:
     chat_id = await get_notification_chat_id(session)
     if chat_id is None:
@@ -118,7 +127,12 @@ async def send_new_order_notification(
         return False
 
     try:
-        await bot.send_message(chat_id, format_new_order_notification(order, created_by_user), parse_mode="HTML")
+        await bot.send_message(
+            chat_id,
+            format_new_order_notification(order, created_by_user),
+            reply_markup=new_order_notification_keyboard(),
+            parse_mode="HTML",
+        )
     except Exception:
         logger.exception("Failed to send new order notification for order_id=%s", order_id)
         return False
