@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import datetime
 from decimal import Decimal
@@ -11,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from db.models import DeliveryStatus, Order, OrderItem, OrderPayment, PaymentMethod, PaymentStatus, Product, Shop
 
 
+logger = logging.getLogger(__name__)
 UTC_TZ = ZoneInfo("UTC")
 BANGKOK_TZ = ZoneInfo("Asia/Bangkok")
 
@@ -444,7 +446,7 @@ async def update_item_unit_price(
     return await recalculate_order_total(session, order)
 
 
-async def get_order(session: AsyncSession, order_id: int) -> Order:
+async def get_order_with_relations(session: AsyncSession, order_id: int) -> Order:
     order = await session.scalar(
         select(Order)
         .where(Order.id == order_id)
@@ -456,6 +458,10 @@ async def get_order(session: AsyncSession, order_id: int) -> Order:
         order.display_number = order.id
         await session.flush()
     return order
+
+
+async def get_order(session: AsyncSession, order_id: int) -> Order:
+    return await get_order_with_relations(session, order_id)
 
 
 def paid_amount(order: Order) -> Decimal:
@@ -479,20 +485,61 @@ def refresh_payment_status(order: Order) -> None:
 
 
 async def sync_order_payment_state(session: AsyncSession, order: Order) -> Order:
-    order = await get_order(session, order.id)
+    order = await get_order_with_relations(session, order.id)
     refresh_payment_status(order)
     await session.flush()
-    order = await get_order(session, order.id)
+    order = await get_order_with_relations(session, order.id)
     from services.finance import sync_order_income_transaction
 
-    await sync_order_income_transaction(session, order)
-    return await get_order(session, order.id)
+    try:
+        await sync_order_income_transaction(session, order)
+    except Exception:
+        logger.exception(
+            "OrderMonster income sync failed after payment update; card refresh will continue",
+            extra={"order_id": order.id},
+        )
+    return await get_order_with_relations(session, order.id)
+
+
+def log_payment_update(
+    order: Order,
+    *,
+    method: str | None,
+    mode: str,
+    amount_added: Decimal,
+    fresh_reload_performed: bool,
+) -> None:
+    paid = decimal_money(paid_amount(order))
+    remaining = decimal_money(remaining_amount(order))
+    logger.info(
+        "Order payment updated",
+        extra={
+            "order_id": order.id,
+            "payment_method": method,
+            "payment_mode": mode,
+            "amount_added": str(decimal_money(amount_added)),
+            "total_amount": str(decimal_money(order.total_amount)),
+            "paid_amount_after_update": str(paid),
+            "remaining_after_update": str(remaining),
+            "payment_status_after_update": order.payment_status.value,
+            "fresh_reload_performed": fresh_reload_performed,
+        },
+    )
 
 
 async def add_payment(session: AsyncSession, order: Order, method: str, amount: Decimal) -> Order:
-    session.add(OrderPayment(order_id=order.id, payment_method=PaymentMethod(method), amount=amount))
+    clean_amount = decimal_money(amount)
+    session.add(OrderPayment(order_id=order.id, payment_method=PaymentMethod(method), amount=clean_amount))
     await session.flush()
-    return await sync_order_payment_state(session, order)
+    updated_order = await sync_order_payment_state(session, order)
+    log_payment_update(
+        updated_order,
+        method=method,
+        mode="partial",
+        amount_added=clean_amount,
+        fresh_reload_performed=True,
+    )
+    return updated_order
 
 
 async def add_payment_to_order(session: AsyncSession, order_id: int, method: str, amount: Decimal) -> Order:
@@ -502,6 +549,7 @@ async def add_payment_to_order(session: AsyncSession, order_id: int, method: str
 
 async def set_order_payment_status(session: AsyncSession, order: Order, method: str | None) -> Order:
     await session.execute(delete(OrderPayment).where(OrderPayment.order_id == order.id))
+    amount = Decimal("0.00")
     if method is None:
         order.payment_status = PaymentStatus.unpaid
     else:
@@ -509,7 +557,15 @@ async def set_order_payment_status(session: AsyncSession, order: Order, method: 
         session.add(OrderPayment(order_id=order.id, payment_method=PaymentMethod(method), amount=amount))
         order.payment_status = PaymentStatus.paid
     await session.flush()
-    return await sync_order_payment_state(session, order)
+    updated_order = await sync_order_payment_state(session, order)
+    log_payment_update(
+        updated_order,
+        method=method,
+        mode="fully_paid" if method is not None else "unpaid",
+        amount_added=amount,
+        fresh_reload_performed=True,
+    )
+    return updated_order
 
 
 async def set_order_payment_status_by_id(session: AsyncSession, order_id: int, method: str | None) -> Order:

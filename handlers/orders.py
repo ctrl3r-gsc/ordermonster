@@ -25,6 +25,7 @@ from services.orders import (
     format_order_datetime,
     get_or_create_shop,
     get_order,
+    get_order_with_relations,
     item_subtotal,
     item_unit_price,
     match_existing_shop_name,
@@ -354,10 +355,21 @@ def edit_prices_keyboard(order) -> InlineKeyboardMarkup:
 
 
 async def show_order_card(target: Message, session: AsyncSession, order_id: int) -> None:
-    order = await get_order(session, order_id)
+    order = await get_order_with_relations(session, order_id)
     await target.edit_text(
         order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML"
     )
+
+
+async def commit_payment_and_reload_order(session: AsyncSession, order_id: int) -> Order:
+    await session.commit()
+    session.expire_all()
+    order = await get_order_with_relations(session, order_id)
+    logger.info(
+        "Fresh order reload performed after payment commit",
+        extra={"order_id": order_id, "fresh_reload_performed": True},
+    )
+    return order
 
 
 def dashboard_summary_text(orders, page: int = 0, counts: dict[str, int] | None = None) -> str:
@@ -813,9 +825,7 @@ async def apply_payment_amount(callback: CallbackQuery, state: FSMContext, sessi
     order_id = int(raw_order_id)
     if mode == "full":
         await set_order_payment_status_by_id(session, order_id, method)
-        await session.commit()
-        session.expire_all()
-        updated_order = await get_order(session, order_id)
+        updated_order = await commit_payment_and_reload_order(session, order_id)
         await callback.message.edit_text(
             order_card_text(updated_order),
             reply_markup=order_card_keyboard(updated_order),
@@ -850,9 +860,7 @@ async def enter_split_amount(message: Message, state: FSMContext, session: Async
         await respond_to_message(message, "Payment amount was not applied.")
         return
     await add_payment_to_order(session, order_id, method, amount)
-    await session.commit()
-    session.expire_all()
-    updated_order = await get_order(session, order_id)
+    updated_order = await commit_payment_and_reload_order(session, order_id)
     await respond_to_message(message, order_card_text(updated_order), reply_markup=order_card_keyboard(updated_order), parse_mode="HTML")
     await state.clear()
 

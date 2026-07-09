@@ -17,7 +17,6 @@ from db.models import (
     Order,
     OrderPayment,
     PaymentMethod,
-    PaymentStatus,
 )
 from services.orders import decimal_money, paid_amount
 
@@ -227,7 +226,6 @@ async def backfill_ordermonster_income_transactions(session: AsyncSession) -> Fi
         (
             await session.scalars(
                 select(Order)
-                .where(Order.payment_status == PaymentStatus.paid)
                 .join(OrderPayment, OrderPayment.order_id == Order.id)
                 .options(selectinload(Order.payments))
                 .distinct()
