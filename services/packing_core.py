@@ -7,6 +7,7 @@ from typing import Iterable
 
 
 MAX_TELEGRAM_MESSAGE_LENGTH = 3900
+PACKING_MARKERS = ("🟥", "🟦", "🟩", "🟨", "🟪", "🟧", "🟫", "⬛️")
 
 
 def packing_status_icon(order) -> str:
@@ -58,12 +59,13 @@ def total_packing_items(orders: Iterable) -> list[tuple[str, int, bool]]:
     ]
 
 
-def item_line(name: str, quantity: int, is_gift: bool = False) -> str:
+def item_line(name: str, quantity: int, is_gift: bool = False, marker: str | None = None) -> str:
     suffix = " gift" if is_gift else ""
-    return f"• {escape(name)} — {quantity} pcs{suffix}"
+    prefix = f"{marker} " if marker else ""
+    return f"{prefix}• {escape(name)} — {quantity} pcs{suffix}"
 
 
-def packing_order_block(order, date_formatter) -> str | None:
+def packing_order_block(order, date_formatter, marker: str | None = None) -> str | None:
     items = grouped_order_items(order)
     if not items:
         return None
@@ -71,8 +73,9 @@ def packing_order_block(order, date_formatter) -> str | None:
     shop = getattr(order, "shop", None)
     shop_name = escape(str(getattr(shop, "name", "Unknown shop") or "Unknown shop"))
     date = packing_date(getattr(order, "created_at", None), date_formatter)
-    lines = [f"#{display_number} | {packing_status_icon(order)} {shop_name} | {date}"]
-    lines.extend(item_line(name, quantity, is_gift) for name, quantity, is_gift in items)
+    prefix = f"{marker} " if marker else ""
+    lines = [f"{prefix}#{display_number} | {packing_status_icon(order)} {shop_name} | {date}"]
+    lines.extend(item_line(name, quantity, is_gift, marker=marker) for name, quantity, is_gift in items)
     return "\n".join(lines)
 
 
@@ -91,8 +94,9 @@ def packing_list_text(orders: list, date_formatter) -> str:
     ]
     lines.extend(item_line(name, quantity, is_gift) for name, quantity, is_gift in total_packing_items(packable_orders))
     lines.extend(["", "<b>BY SHOP:</b>"])
-    for order in packable_orders:
-        block = packing_order_block(order, date_formatter)
+    for index, order in enumerate(packable_orders):
+        marker = PACKING_MARKERS[index % len(PACKING_MARKERS)]
+        block = packing_order_block(order, date_formatter, marker=marker)
         if block:
             lines.extend(["", block])
     return "\n".join(lines)

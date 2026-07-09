@@ -1,7 +1,13 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from services.packing_core import grouped_order_items, packing_list_text, split_packing_messages, total_packing_items
+from services.packing_core import (
+    PACKING_MARKERS,
+    grouped_order_items,
+    packing_list_text,
+    split_packing_messages,
+    total_packing_items,
+)
 
 
 @dataclass
@@ -90,7 +96,23 @@ def test_packing_list_text_contains_summary_and_shop_blocks() -> None:
     assert "Boxes: <b>1</b>" in text
     assert "• Brownie 100mg — 10 pcs" in text
     assert "• Gummies (Mango) — 2 pcs gift" in text
-    assert "#68 | ⏳ KING CANNABIS | 09.07 09:34" in text
+    assert "🟥 #68 | ⏳ KING CANNABIS | 09.07 09:34" in text
+    assert "🟥 • Brownie 100mg — 10 pcs" in text
+    assert "🟥 • Gummies (Mango) — 2 pcs gift" in text
+
+
+def test_packing_list_cycles_order_markers() -> None:
+    brownie = Product("Brownie 100mg")
+    orders = [
+        make_order(index + 1, f"SHOP {index + 1}", [Item(brownie, 1)])
+        for index in range(len(PACKING_MARKERS) + 1)
+    ]
+
+    text = packing_list_text(orders, date_formatter)
+
+    assert "🟥 #1 | ⏳ SHOP 1 | 09.07 09:34" in text
+    assert "⬛️ #8 | ⏳ SHOP 8 | 09.07 09:34" in text
+    assert "🟥 #9 | ⏳ SHOP 9 | 09.07 09:34" in text
 
 
 def test_no_pending_orders_message_is_compact() -> None:
