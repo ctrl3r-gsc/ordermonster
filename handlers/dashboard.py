@@ -70,7 +70,7 @@ def order_state_emoji(order) -> str:
 def dashboard_button_text(order) -> str:
     created_at = format_dashboard_datetime(order.created_at).replace(" ", " (") + ")"
     shop_name = order.shop.name[:18]
-    return f"#{display_order_number(order)} | 📅 {created_at} | {shop_name} | {order_state_emoji(order)}"[:64]
+    return f"#{display_order_number(order)} | {order_state_emoji(order)} {created_at} | {shop_name}"[:64]
 
 
 def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineKeyboardMarkup:

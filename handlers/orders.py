@@ -406,8 +406,8 @@ def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineK
     for order in orders:
         created_at = format_dashboard_datetime(order.created_at).replace(" ", " (") + ")"
         text = (
-            f"#{display_order_number(order)} | 📅 {created_at} | {order.shop.name[:18]} | "
-            f"{dashboard_order_state_emoji(order)}"
+            f"#{display_order_number(order)} | {dashboard_order_state_emoji(order)} "
+            f"{created_at} | {order.shop.name[:18]}"
         )
         rows.append([InlineKeyboardButton(text=text[:64], callback_data=f"ord:{order.id}")])
     pagination_row = []
