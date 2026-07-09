@@ -16,6 +16,21 @@ def packing_status_icon(order) -> str:
     return "⏳"
 
 
+def delivery_status_value(order) -> str:
+    status = getattr(order, "delivery_status", None)
+    return str(getattr(status, "value", status) or "")
+
+
+def is_order_needing_packing(order) -> bool:
+    status = delivery_status_value(order)
+    tracking_number = str(getattr(order, "tracking_number", "") or "").strip()
+    if status in {"delivered", "shipped", "shipped_out", "shipped out"}:
+        return False
+    if tracking_number and status.startswith("shipped"):
+        return False
+    return True
+
+
 def packing_date(value: datetime | None, formatter) -> str:
     if value is None:
         return "unknown"
@@ -80,7 +95,7 @@ def packing_order_block(order, date_formatter, marker: str | None = None) -> str
 
 
 def packing_list_text(orders: list, date_formatter) -> str:
-    packable_orders = [order for order in orders if grouped_order_items(order)]
+    packable_orders = [order for order in orders if is_order_needing_packing(order) and grouped_order_items(order)]
     if not packable_orders:
         return "📦 <b>Packing List</b>\n\nNothing to prepare right now."
 

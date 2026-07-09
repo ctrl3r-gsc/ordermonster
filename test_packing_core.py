@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from services.packing_core import (
     PACKING_MARKERS,
     grouped_order_items,
+    is_order_needing_packing,
     packing_list_text,
     split_packing_messages,
     total_packing_items,
@@ -41,13 +42,20 @@ class Order:
     items: list[Item]
     created_at: datetime
     delivery_status: Status
+    tracking_number: str | None = None
 
 
 def date_formatter(value: datetime) -> str:
     return value.strftime("%d.%m %H:%M")
 
 
-def make_order(display_number: int, shop_name: str, items: list[Item], status: str = "pending_shipment") -> Order:
+def make_order(
+    display_number: int,
+    shop_name: str,
+    items: list[Item],
+    status: str = "pending_shipment",
+    tracking_number: str | None = None,
+) -> Order:
     return Order(
         id=display_number,
         display_number=display_number,
@@ -55,6 +63,7 @@ def make_order(display_number: int, shop_name: str, items: list[Item], status: s
         items=items,
         created_at=datetime(2026, 7, 9, 9, 34, tzinfo=timezone.utc),
         delivery_status=Status(status),
+        tracking_number=tracking_number,
     )
 
 
@@ -99,6 +108,28 @@ def test_packing_list_text_contains_summary_and_shop_blocks() -> None:
     assert "🟥 #68 | ⏳ KING CANNABIS | 09.07 09:34" in text
     assert "🟥 • Brownie 100mg — 10 pcs" in text
     assert "🟥 • Gummies (Mango) — 2 pcs gift" in text
+
+
+def test_packing_list_excludes_delivered_and_shipped_orders() -> None:
+    brownie = Product("Brownie 100mg")
+    orders = [
+        make_order(1, "PENDING SHOP", [Item(brownie, 1)]),
+        make_order(2, "SHIPPED SHOP", [Item(brownie, 1)], status="shipped", tracking_number="ABC123"),
+        make_order(3, "SHIPPED EMPTY TRACK", [Item(brownie, 1)], status="shipped"),
+        make_order(4, "DELIVERED SHOP", [Item(brownie, 1)], status="delivered"),
+    ]
+
+    text = packing_list_text(orders, date_formatter)
+
+    assert is_order_needing_packing(orders[0]) is True
+    assert is_order_needing_packing(orders[1]) is False
+    assert is_order_needing_packing(orders[2]) is False
+    assert is_order_needing_packing(orders[3]) is False
+    assert "PENDING SHOP" in text
+    assert "SHIPPED SHOP" not in text
+    assert "SHIPPED EMPTY TRACK" not in text
+    assert "DELIVERED SHOP" not in text
+    assert "Orders to prepare: <b>1</b>" in text
 
 
 def test_packing_list_cycles_order_markers() -> None:
