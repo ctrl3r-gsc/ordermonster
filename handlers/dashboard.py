@@ -85,6 +85,7 @@ def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineK
         pagination_row.append(InlineKeyboardButton(text="Next ➡️", callback_data=f"dash_page:{page + 1}"))
     if pagination_row:
         rows.append(pagination_row)
+    rows.append([InlineKeyboardButton(text="📦 Packing List", callback_data="packing:list")])
     rows.append([InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
