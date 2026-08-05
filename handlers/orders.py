@@ -174,7 +174,7 @@ def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardM
     if not is_delivered:
         rows.append([InlineKeyboardButton(text="✏️ Edit Delivery", callback_data=f"del:{order_id}")])
     rows.append([InlineKeyboardButton(text="💵 Edit Prices", callback_data=f"pr:{order_id}")])
-    rows.append([InlineKeyboardButton(text="Edit Items", callback_data=f"items:{order_id}")])
+    rows.append([InlineKeyboardButton(text="🛒 Edit Items", callback_data=f"items:{order_id}")])
     if order:
         missing_row = []
         if not order.shop.address:
