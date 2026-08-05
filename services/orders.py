@@ -601,6 +601,10 @@ async def set_order_payment_status(session: AsyncSession, order: Order, method: 
         session.add(OrderPayment(order_id=order.id, payment_method=PaymentMethod(method), amount=amount))
         order.payment_status = PaymentStatus.paid
     await session.flush()
+    # The bulk delete above bypasses the loaded relationship collection. Expire
+    # it before recalculating totals, otherwise the old payments can remain in
+    # memory and get added to the replacement payment.
+    session.expire(order, ["payments"])
     updated_order = await sync_order_payment_state(session, order)
     log_payment_update(
         updated_order,
