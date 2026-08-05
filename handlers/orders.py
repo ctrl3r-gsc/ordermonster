@@ -11,7 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import DeliveryStatus, Order, Shop
+from db.models import DeliveryStatus, Order, Product, Shop
 from services.catalog import active_catalog, all_catalog, catalog_for_parser
 from services.orders import (
     add_payment_to_order,
@@ -33,6 +33,8 @@ from services.orders import (
     sanitize_shop_input,
     set_order_payment_status_by_id,
     update_item_unit_price,
+    add_item_to_order,
+    remove_item_from_order,
     remaining_amount,
     sanitize_shop_name,
 )
@@ -84,6 +86,7 @@ class OrderFlow(StatesGroup):
     entering_split_amount = State()
     entering_tracking = State()
     entering_custom_price = State()
+    entering_item_quantity = State()
 
 
 def money(value: Decimal | int | str | None) -> str:
@@ -171,6 +174,7 @@ def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardM
     if not is_delivered:
         rows.append([InlineKeyboardButton(text="✏️ Edit Delivery", callback_data=f"del:{order_id}")])
     rows.append([InlineKeyboardButton(text="💵 Edit Prices", callback_data=f"pr:{order_id}")])
+    rows.append([InlineKeyboardButton(text="Edit Items", callback_data=f"items:{order_id}")])
     if order:
         missing_row = []
         if not order.shop.address:
@@ -351,6 +355,32 @@ def edit_prices_keyboard(order) -> InlineKeyboardMarkup:
         bits.append(f"- {money(item_unit_price(item))} THB")
         rows.append([InlineKeyboardButton(text=" ".join(bits)[:60], callback_data=f"pi:{order.id}:{item.id}")])
     rows.append([InlineKeyboardButton(text="🔙 Back", callback_data=f"ord:{order.id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def edit_items_keyboard(order) -> InlineKeyboardMarkup:
+    rows = []
+    for index, item in enumerate(order.items, start=1):
+        product = item.product
+        label = f"{index}. Remove {product.name} x{item.quantity}"
+        if product.flavor:
+            label += f" ({product.flavor})"
+        rows.append([InlineKeyboardButton(text=label[:60], callback_data=f"item_remove:{order.id}:{item.id}")])
+    rows.append([InlineKeyboardButton(text="Add Item", callback_data=f"item_add:{order.id}")])
+    rows.append([InlineKeyboardButton(text="Back", callback_data=f"ord:{order.id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def add_item_products_keyboard(order_id: int, products) -> InlineKeyboardMarkup:
+    rows = []
+    for product in products:
+        label = product.name
+        if product.dosage:
+            label += f" {product.dosage}mg"
+        if product.flavor:
+            label += f" ({product.flavor})"
+        rows.append([InlineKeyboardButton(text=label[:60], callback_data=f"item_pick:{order_id}:{product.id}")])
+    rows.append([InlineKeyboardButton(text="Back", callback_data=f"items:{order_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -801,6 +831,88 @@ async def enter_added_phone(message: Message, state: FSMContext, session: AsyncS
 async def open_order(callback: CallbackQuery, session: AsyncSession) -> None:
     await show_order_card(callback.message, session, int(callback.data.split(":")[1]))
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("items:"))
+async def edit_items(callback: CallbackQuery, session: AsyncSession) -> None:
+    order_id = int(callback.data.split(":")[1])
+    order = await get_order(session, order_id)
+    await callback.message.edit_text(
+        "Edit order items:",
+        reply_markup=edit_items_keyboard(order),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("item_remove:"))
+async def remove_order_item(callback: CallbackQuery, session: AsyncSession) -> None:
+    _, raw_order_id, raw_item_id = callback.data.split(":")
+    try:
+        order = await remove_item_from_order(session, int(raw_order_id), int(raw_item_id))
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await callback.message.edit_text(
+        "Edit order items:",
+        reply_markup=edit_items_keyboard(order),
+    )
+    await callback.answer("Item removed")
+
+
+@router.callback_query(F.data.startswith("item_add:"))
+async def add_order_item(callback: CallbackQuery, session: AsyncSession) -> None:
+    order_id = int(callback.data.split(":")[1])
+    products = await active_catalog(session)
+    if not products:
+        await callback.answer("No active products in catalog.", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "Choose a product to add:",
+        reply_markup=add_item_products_keyboard(order_id, products),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("item_pick:"))
+async def choose_order_item_product(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    _, raw_order_id, raw_product_id = callback.data.split(":")
+    order_id = int(raw_order_id)
+    product_id = int(raw_product_id)
+    product = await session.get(Product, product_id)
+    if product is None or not product.is_active:
+        await callback.answer("Product is not active.", show_alert=True)
+        return
+    await state.update_data(order_id=order_id, product_id=product_id)
+    await state.set_state(OrderFlow.entering_item_quantity)
+    await callback.message.edit_text(f"Type quantity for {product.name}.")
+    await callback.answer()
+
+
+@router.message(OrderFlow.entering_item_quantity, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
+async def enter_order_item_quantity(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    raw_quantity = message.text.strip()
+    if not raw_quantity.isdigit() or int(raw_quantity) <= 0:
+        await respond_to_message(message, "Enter a positive whole number for quantity.")
+        return
+    data = await state.get_data()
+    try:
+        order = await add_item_to_order(
+            session,
+            int(data["order_id"]),
+            int(data["product_id"]),
+            int(raw_quantity),
+        )
+    except (KeyError, ValueError) as exc:
+        await state.clear()
+        await respond_to_message(message, str(exc))
+        return
+    await state.clear()
+    await respond_to_message(
+        message,
+        order_card_text(order),
+        reply_markup=order_card_keyboard(order),
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data.startswith("pay:"))
