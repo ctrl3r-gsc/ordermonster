@@ -472,6 +472,7 @@ async def add_item_to_order(
         )
     )
     await session.flush()
+    session.expire(order, ["items"])
     order = await get_order(session, order_id)
     return await recalculate_order_total(session, order)
 
@@ -486,6 +487,7 @@ async def remove_item_from_order(session: AsyncSession, order_id: int, item_id: 
 
     await session.delete(target)
     await session.flush()
+    session.expire(order, ["items"])
     order = await get_order(session, order_id)
     return await recalculate_order_total(session, order)
 
