@@ -104,3 +104,16 @@ packing alias are preserved. Existing allowed-user/chat middleware applies.
 Group chats receive instructions to use the private chat instead.
 The button opens the current Assembly shell; Telegram authentication belongs to
 Assembly and must validate initData using the launching bot identity.
+
+## Assembly order export API
+
+`assembly_api.py` runs separately from polling. It exposes GET /v1/orders only on
+the private assembly-integration Docker network, authenticated with the
+ASSEMBLY_EXPORT_TOKEN bearer secret. No ports are published. Use
+`docker compose -f docker-compose.yml -f docker-compose.assembly.yml up -d --no-deps assembly-export`
+after building the exporter and creating the external network. The shared secret
+must match ORDERMONSTER_API_TOKEN in Assembly. Do not expose this API publicly.
+The export is read-only, includes a consistent snapshot of pending_shipment orders only and
+contains only IDs, shop/product names, quantities, dates and payment/delivery statuses.
+More than 10,000 unshipped orders returns 503 rather than a truncated destructive snapshot.
+Assembly decides which orders are active; no source statuses are changed.
