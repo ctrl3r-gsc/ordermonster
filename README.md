@@ -95,3 +95,12 @@ python main.py
 ```bash
 python -m migration.migrate --file result.json
 ```
+
+## Assembly Mini App
+
+Send `/open_assembly` in a private chat with the bot to receive an inline Web App
+button for https://assembly.gosuay.com. The command menu and existing `/assembly`
+packing alias are preserved. Existing allowed-user/chat middleware applies.
+Group chats receive instructions to use the private chat instead.
+The button opens the current Assembly shell; Telegram authentication belongs to
+Assembly and must validate initData using the launching bot identity.
