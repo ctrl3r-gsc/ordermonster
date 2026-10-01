@@ -446,6 +446,52 @@ async def update_item_unit_price(
     return await recalculate_order_total(session, order)
 
 
+async def add_item_to_order(
+    session: AsyncSession,
+    order_id: int,
+    product_id: int,
+    quantity: int,
+    is_gift: bool = False,
+) -> Order:
+    if quantity <= 0:
+        raise ValueError("Quantity must be positive")
+
+    order = await get_order(session, order_id)
+    product = await session.get(Product, product_id)
+    if product is None or not product.is_active:
+        raise ValueError("Product is not active")
+
+    unit_price = calculated_unit_price(product, order.shop, is_gift)
+    session.add(
+        OrderItem(
+            order_id=order.id,
+            product_id=product.id,
+            quantity=quantity,
+            price_per_unit=unit_price,
+            is_gift=is_gift,
+        )
+    )
+    await session.flush()
+    session.expire(order, ["items"])
+    order = await get_order(session, order_id)
+    return await recalculate_order_total(session, order)
+
+
+async def remove_item_from_order(session: AsyncSession, order_id: int, item_id: int) -> Order:
+    order = await get_order(session, order_id)
+    target = next((item for item in order.items if item.id == item_id), None)
+    if target is None:
+        raise ValueError(f"Order item {item_id} not found in order {order_id}")
+    if len(order.items) <= 1:
+        raise ValueError("An order must contain at least one item")
+
+    await session.delete(target)
+    await session.flush()
+    session.expire(order, ["items"])
+    order = await get_order(session, order_id)
+    return await recalculate_order_total(session, order)
+
+
 async def get_order_with_relations(session: AsyncSession, order_id: int) -> Order:
     order = await session.scalar(
         select(Order)
@@ -557,6 +603,10 @@ async def set_order_payment_status(session: AsyncSession, order: Order, method: 
         session.add(OrderPayment(order_id=order.id, payment_method=PaymentMethod(method), amount=amount))
         order.payment_status = PaymentStatus.paid
     await session.flush()
+    # The bulk delete above bypasses the loaded relationship collection. Expire
+    # it before recalculating totals, otherwise the old payments can remain in
+    # memory and get added to the replacement payment.
+    session.expire(order, ["payments"])
     updated_order = await sync_order_payment_state(session, order)
     log_payment_update(
         updated_order,
