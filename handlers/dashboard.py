@@ -86,6 +86,7 @@ def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineK
     if pagination_row:
         rows.append(pagination_row)
     rows.append([InlineKeyboardButton(text="📦 Packing List", callback_data="packing:list")])
+    rows.append([InlineKeyboardButton(text="💰 Debts", callback_data="debts:page:0")])
     rows.append([InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -93,6 +94,7 @@ def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineK
 def dashboard_empty_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="💰 Debts", callback_data="debts:page:0")],
             [InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")],
         ]
     )

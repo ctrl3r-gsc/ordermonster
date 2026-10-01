@@ -5,6 +5,7 @@ from decimal import Decimal
 from services.statistics_core import (
     BANGKOK_TZ,
     aggregate_debt_rows,
+    aggregate_debt_dashboard_rows,
     aggregate_debt_shop_rows,
     aggregate_shop_sales_rows,
     aggregate_stats_rows,
@@ -114,6 +115,18 @@ def test_debts_group_by_shop() -> None:
     assert stats["total_debt"] == Decimal("8090.00")
     assert stats["order_count"] == 3
     assert stats["shops"][1]["order_count"] == 2
+
+
+def test_debt_dashboard_uses_remaining_amount_and_excludes_zero() -> None:
+    rows = [
+        DebtRow(52, 52, "KRISHNA", Decimal("250.00"), "delivered", datetime(2026, 6, 1), 10),
+        DebtRow(56, 56, "RETAIL", Decimal("1500.00"), "delivered", datetime(2026, 6, 2), 9),
+        DebtRow(41, 41, "PAID", Decimal("0.00"), "delivered", datetime(2026, 6, 3), 8),
+    ]
+    stats = aggregate_debt_dashboard_rows(rows)
+    assert stats["order_count"] == 2
+    assert stats["total_debt"] == Decimal("1750.00")
+    assert stats["orders"][0]["debt_amount"] == Decimal("250.00")
 
 
 def test_shop_aggregation_counts_paid_sales_and_unpaid_amount() -> None:

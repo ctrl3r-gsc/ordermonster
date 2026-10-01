@@ -167,7 +167,7 @@ def order_card_text(order, parsed_address: str | None = None, parsed_phone: str 
     return "\n".join(lines)
 
 
-def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardMarkup:
+def order_card_keyboard(order_or_id, delivered: bool = False, back_to_debts: bool = False) -> InlineKeyboardMarkup:
     order = order_or_id if hasattr(order_or_id, "id") else None
     order_id = order.id if order else int(order_or_id)
     is_delivered = order.delivery_status == DeliveryStatus.delivered if order else delivered
@@ -185,6 +185,8 @@ def order_card_keyboard(order_or_id, delivered: bool = False) -> InlineKeyboardM
         if missing_row:
             rows.append(missing_row)
     rows.append([InlineKeyboardButton(text="📊 Dashboard", callback_data="dash")])
+    if back_to_debts:
+        rows.append([InlineKeyboardButton(text="💰 Back to Debts", callback_data="debts:back")])
     rows.append([InlineKeyboardButton(text="🗑 Delete Order", callback_data=f"delete_order:{order_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 def draft_order_card_text(parsed: dict) -> str:
@@ -315,23 +317,25 @@ def delete_confirmation_keyboard(order_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def payment_keyboard(order_id: int) -> InlineKeyboardMarkup:
+def payment_keyboard(order_id: int, back_to_debts: bool = False) -> InlineKeyboardMarkup:
+    suffix = ":debts" if back_to_debts else ""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="💵 Cash", callback_data=f"pay_method:{order_id}:cash")],
-            [InlineKeyboardButton(text="💳 Transfer", callback_data=f"pay_method:{order_id}:transaction")],
-            [InlineKeyboardButton(text="🪙 Crypto", callback_data=f"pay_method:{order_id}:crypto")],
+            [InlineKeyboardButton(text="💵 Cash", callback_data=f"pay_method:{order_id}:cash{suffix}")],
+            [InlineKeyboardButton(text="💳 Transfer", callback_data=f"pay_method:{order_id}:transaction{suffix}")],
+            [InlineKeyboardButton(text="🪙 Crypto", callback_data=f"pay_method:{order_id}:crypto{suffix}")],
             [InlineKeyboardButton(text="🔙 Back", callback_data=f"ord:{order_id}")],
         ]
     )
 
 
-def payment_amount_keyboard(order_id: int, method: str) -> InlineKeyboardMarkup:
+def payment_amount_keyboard(order_id: int, method: str, back_to_debts: bool = False) -> InlineKeyboardMarkup:
+    suffix = ":debts" if back_to_debts else ""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Fully Paid", callback_data=f"pay_apply:full:{order_id}:{method}")],
-            [InlineKeyboardButton(text="🧾 Partially Paid", callback_data=f"pay_apply:partial:{order_id}:{method}")],
-            [InlineKeyboardButton(text="🔙 Back", callback_data=f"pay:{order_id}")],
+            [InlineKeyboardButton(text="✅ Fully Paid", callback_data=f"pay_apply:full:{order_id}:{method}{suffix}")],
+            [InlineKeyboardButton(text="🧾 Partially Paid", callback_data=f"pay_apply:partial:{order_id}:{method}{suffix}")],
+            [InlineKeyboardButton(text="🔙 Back", callback_data=f"pay:{order_id}{suffix}")],
         ]
     )
 def delivery_keyboard(order_id: int) -> InlineKeyboardMarkup:
@@ -449,6 +453,7 @@ def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineK
     if pagination_row:
         rows.append(pagination_row)
     rows.append([InlineKeyboardButton(text="📦 Packing List", callback_data="packing:list")])
+    rows.append([InlineKeyboardButton(text="💰 Debts", callback_data="debts:page:0")])
     rows.append([InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")])
     rows.append([InlineKeyboardButton(text="Products", callback_data="catalog:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -457,6 +462,7 @@ def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineK
 def dashboard_empty_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="💰 Debts", callback_data="debts:page:0")],
             [InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")],
             [InlineKeyboardButton(text="Products", callback_data="catalog:list")],
         ]
@@ -917,32 +923,44 @@ async def enter_order_item_quantity(message: Message, state: FSMContext, session
 
 
 @router.callback_query(F.data.startswith("pay:"))
-async def edit_payment(callback: CallbackQuery) -> None:
-    order_id = int(callback.data.split(":")[1])
-    await callback.message.edit_text("Choose payment method:", reply_markup=payment_keyboard(order_id))
+async def edit_payment(callback: CallbackQuery, state: FSMContext) -> None:
+    parts = callback.data.split(":")
+    order_id = int(parts[1])
+    from_debts = len(parts) > 2 and parts[2] == "debts"
+    if from_debts:
+        await state.update_data(from_debts=True)
+    await callback.message.edit_text("Choose payment method:", reply_markup=payment_keyboard(order_id, from_debts))
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("pay_method:"))
-async def choose_payment_method_first(callback: CallbackQuery) -> None:
-    _, raw_order_id, method = callback.data.split(":")
+async def choose_payment_method_first(callback: CallbackQuery, state: FSMContext) -> None:
+    parts = callback.data.split(":")
+    _, raw_order_id, method = parts[:3]
+    from_debts = len(parts) > 3 and parts[3] == "debts"
+    if from_debts:
+        await state.update_data(from_debts=True)
     await callback.message.edit_text(
         "Choose payment amount:",
-        reply_markup=payment_amount_keyboard(int(raw_order_id), method),
+        reply_markup=payment_amount_keyboard(int(raw_order_id), method, from_debts),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("pay_apply:"))
 async def apply_payment_amount(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    _, mode, raw_order_id, method = callback.data.split(":")
+    parts = callback.data.split(":")
+    _, mode, raw_order_id, method = parts[:4]
+    from_debts = len(parts) > 4 and parts[4] == "debts"
+    if from_debts:
+        await state.update_data(from_debts=True)
     order_id = int(raw_order_id)
     if mode == "full":
         await set_order_payment_status_by_id(session, order_id, method)
         updated_order = await commit_payment_and_reload_order(session, order_id)
         await callback.message.edit_text(
             order_card_text(updated_order),
-            reply_markup=order_card_keyboard(updated_order),
+            reply_markup=order_card_keyboard(updated_order, back_to_debts=from_debts or bool((await state.get_data()).get("from_debts"))),
             parse_mode="HTML",
         )
         await callback.answer()
@@ -975,7 +993,7 @@ async def enter_split_amount(message: Message, state: FSMContext, session: Async
         return
     await add_payment_to_order(session, order_id, method, amount)
     updated_order = await commit_payment_and_reload_order(session, order_id)
-    await respond_to_message(message, order_card_text(updated_order), reply_markup=order_card_keyboard(updated_order), parse_mode="HTML")
+    await respond_to_message(message, order_card_text(updated_order), reply_markup=order_card_keyboard(updated_order, back_to_debts=bool(data.get("from_debts"))), parse_mode="HTML")
     await state.clear()
 
 

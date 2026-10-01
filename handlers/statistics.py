@@ -6,10 +6,12 @@ from html import escape
 from aiogram import F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.statistics import (
+    get_debt_dashboard,
     get_debt_stats,
     get_followup_stats,
     get_product_performance_stats,
@@ -19,11 +21,13 @@ from services.statistics import (
     get_shop_sales_stats,
 )
 from services.statistics_core import BANGKOK_TZ
+from handlers.orders import get_order_with_relations, order_card_keyboard, order_card_text
 
 
 router = Router()
 ORDER_CHAT_TYPES = (ChatType.PRIVATE, ChatType.GROUP, ChatType.SUPERGROUP)
 PERIODS = ("today", "week", "month", "all")
+DEBT_PAGE_SIZE = 10
 PERIOD_LABELS = {
     "en": {
         "today": "Today",
@@ -489,6 +493,51 @@ async def edit_debt_statistics(callback: CallbackQuery, session: AsyncSession, m
     )
 
 
+def debt_dashboard_text(stats: dict, page: int) -> str:
+    lines = ["💰 <b>Debts</b>", "", f"Orders with debt: <b>{stats['order_count']}</b>",
+             f"Total debt: <b>{money(stats['total_debt'])} THB</b>", ""]
+    if not stats["orders"]:
+        lines.append("✅ No outstanding debts.")
+        return "\n".join(lines)
+    start = page * DEBT_PAGE_SIZE
+    end = min(start + DEBT_PAGE_SIZE, len(stats["orders"]))
+    lines.append("Select an order:")
+    lines.append(f"Page: <b>{page + 1}/{max(1, (len(stats['orders']) + DEBT_PAGE_SIZE - 1) // DEBT_PAGE_SIZE)}</b>")
+    return "\n".join(lines)
+
+
+def debt_dashboard_keyboard(stats: dict, page: int) -> InlineKeyboardMarkup:
+    orders = stats["orders"]
+    start = page * DEBT_PAGE_SIZE
+    rows = []
+    for order in orders[start:start + DEBT_PAGE_SIZE]:
+        shop = " ".join(str(order["shop_name"]).split())[:24]
+        label = f"#{order['display_number']} · {shop} · {money(order['debt_amount'])}฿"
+        rows.append([InlineKeyboardButton(text=label[:64], callback_data=f"debts:open:{order['order_id']}")])
+    pages = max(1, (len(orders) + DEBT_PAGE_SIZE - 1) // DEBT_PAGE_SIZE)
+    if pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="◀️ Prev", callback_data=f"debts:page:{page - 1}"))
+        nav.append(InlineKeyboardButton(text=f"Page {page + 1}/{pages}", callback_data=f"debts:page:{page}"))
+        if page + 1 < pages:
+            nav.append(InlineKeyboardButton(text="Next ▶️", callback_data=f"debts:page:{page + 1}"))
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="📊 Dashboard", callback_data="dash")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def render_debt_dashboard(target: Message | CallbackQuery, session: AsyncSession, page: int = 0) -> None:
+    stats = await get_debt_dashboard(session)
+    page = max(0, min(page, max(0, (len(stats["orders"]) - 1) // DEBT_PAGE_SIZE)))
+    text = debt_dashboard_text(stats, page)
+    markup = debt_dashboard_keyboard(stats, page) if stats["orders"] else debt_dashboard_keyboard(stats, 0)
+    if isinstance(target, CallbackQuery):
+        await target.message.edit_text(text, reply_markup=markup, parse_mode="HTML")
+    else:
+        await respond_to_message(target, text, reply_markup=markup, parse_mode="HTML")
+
+
 async def show_shop_statistics(message: Message, session: AsyncSession, period: str = "month") -> None:
     lang = ui_lang(message.from_user.language_code if message.from_user else None)
     stats = await get_shop_sales_stats(session, period)
@@ -588,7 +637,7 @@ async def statistics_command(message: Message, session: AsyncSession) -> None:
 @router.message(Command("debts"), F.chat.type.in_(ORDER_CHAT_TYPES))
 async def debts_command(message: Message, session: AsyncSession) -> None:
     try:
-        await show_debt_statistics(message, session, "delivered")
+        await render_debt_dashboard(message, session)
     except Exception:
         logging.exception("Debts command failed")
         await respond_to_message(message, "Debts failed to load. Try again later.")
@@ -643,6 +692,42 @@ async def product_statistics_period(callback: CallbackQuery, session: AsyncSessi
     except Exception:
         logging.exception("Product statistics callback failed")
         await callback.answer("Product statistics failed to load.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("debts:page:"))
+async def debt_dashboard_page(callback: CallbackQuery, session: AsyncSession) -> None:
+    try:
+        page = int(callback.data.rsplit(":", 1)[1])
+        await render_debt_dashboard(callback, session, page)
+        await callback.answer()
+    except Exception:
+        logging.exception("Debt dashboard page failed")
+        await callback.answer("Debts failed to load.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("debts:open:"))
+async def debt_dashboard_open_order(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    try:
+        order_id = int(callback.data.rsplit(":", 1)[1])
+        order = await get_order_with_relations(session, order_id)
+        await state.update_data(from_debts=True)
+        await callback.message.edit_text(
+            order_card_text(order), reply_markup=order_card_keyboard(order, back_to_debts=True), parse_mode="HTML"
+        )
+        await callback.answer()
+    except ValueError:
+        await callback.answer("This order no longer exists.", show_alert=True)
+        await render_debt_dashboard(callback, session)
+    except Exception:
+        logging.exception("Debt order open failed")
+        await callback.answer("Order failed to load.", show_alert=True)
+
+
+@router.callback_query(F.data == "debts:back")
+async def debt_dashboard_back(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    await state.clear()
+    await render_debt_dashboard(callback, session)
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("stats:debts:"))

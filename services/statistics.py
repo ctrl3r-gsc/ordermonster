@@ -12,6 +12,7 @@ from services.statistics_core import (
     aggregate_product_performance_rows,
     aggregate_shop_analytics,
     aggregate_debt_rows,
+    aggregate_debt_dashboard_rows,
     aggregate_debt_shop_rows,
     aggregate_shop_sales_rows,
     aggregate_stats_rows,
@@ -162,6 +163,29 @@ async def get_debt_stats(session: AsyncSession, mode: str = "delivered") -> dict
     stats["limited"] = len(stats["orders"]) > MAX_ANALYTICS_ROWS
     stats["orders"] = stats["orders"][:MAX_ANALYTICS_ROWS]
     return stats
+
+
+async def get_debt_dashboard(session: AsyncSession, mode: str = "delivered") -> dict:
+    """Return every outstanding delivered debt using actual payment totals."""
+    payment_totals = _payment_totals_subquery()
+    debt_amount = _debt_amount_expr(payment_totals)
+    filters = [debt_amount > 0]
+    if mode == "delivered":
+        filters.append(Order.delivery_status == DeliveryStatus.delivered)
+    rows_stmt = (
+        select(
+            Order.id.label("order_id"), Order.display_number.label("display_number"),
+            Shop.name.label("shop_name"), debt_amount.label("debt_amount"),
+            Order.delivery_status.label("delivery_status"), Order.created_at.label("created_at"),
+            _age_days_expr().label("age_days"),
+        )
+        .join(Shop, Shop.id == Order.shop_id)
+        .outerjoin(payment_totals, payment_totals.c.order_id == Order.id)
+        .where(*filters)
+        .order_by(Order.created_at.asc(), Order.id.asc())
+    )
+    rows = (await session.execute(rows_stmt)).all()
+    return aggregate_debt_dashboard_rows(rows)
 
 
 async def get_shop_sales_stats(session: AsyncSession, period: str) -> dict:
