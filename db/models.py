@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -112,6 +112,10 @@ class Order(Base):
         Enum(PaymentStatus, name="payment_status"), default=PaymentStatus.unpaid, index=True
     )
     tracking_number: Mapped[str | None] = mapped_column(Text)
+    shipped_by_telegram_id: Mapped[int | None] = mapped_column(BigInteger)
+    shipped_by_name: Mapped[str | None] = mapped_column(String(255))
+    shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    shipment_source: Mapped[str | None] = mapped_column(String(32))
     total_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     notification_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -189,3 +193,11 @@ Index(
         & (CompanyTransaction.related_order_id.is_not(None))
     ),
 )
+
+
+class AssemblyShipmentCommand(Base):
+    __tablename__ = "assembly_shipment_commands"
+    request_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    result: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

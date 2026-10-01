@@ -9,6 +9,8 @@ from sqlalchemy.orm import selectinload
 
 from db.models import DeliveryStatus, Order, OrderItem
 from db.session import SessionLocal
+from config import get_settings
+from services.fulfillment import ShipmentCommand, ShipmentConflict, apply_command, fulfillment
 
 MAX_ORDERS = 10000
 
@@ -42,13 +44,56 @@ async def orders(request: web.Request) -> web.Response:
                              headers={"Cache-Control": "no-store"})
 
 
+
+def authorize(request):
+    if not hmac.compare_digest(request.headers.get("Authorization", "").encode(), ("Bearer " + request.app["export_token"]).encode()):
+        raise web.HTTPUnauthorized()
+
+
+async def shipment_status(request):
+    """Only metadata for specified imported IDs; no historical order export."""
+    authorize(request)
+    try:
+        ids = [int(value) for value in request.query.get("ids", "").split(",")]
+        if not 1 <= len(ids) <= 100 or any(value <= 0 for value in ids):
+            raise ValueError()
+    except ValueError:
+        raise web.HTTPBadRequest(text="Provide 1 to 100 positive order IDs") from None
+    async with SessionLocal() as session:
+        await session.execute(text("SET TRANSACTION READ ONLY"))
+        records = (await session.scalars(select(Order).where(Order.id.in_(ids)))).all()
+        result = [fulfillment(order) for order in records]
+    return web.json_response({"orders": result}, headers={"Cache-Control": "no-store"})
+
+
+async def shipment_command(request):
+    authorize(request)
+    try:
+        command = ShipmentCommand.model_validate(await request.json())
+    except ValueError:
+        raise web.HTTPBadRequest(text="Invalid shipment command") from None
+    if command.actor_id not in get_settings().allowed_users:
+        raise web.HTTPForbidden(text="Сотруднику не разрешён доступ")
+    try:
+        async with SessionLocal() as session:
+            async with session.begin():
+                result = await apply_command(session, command)
+    except ShipmentConflict as error:
+        raise web.HTTPConflict(text=str(error)) from None
+    except LookupError:
+        raise web.HTTPNotFound(text="Заказ не найден") from None
+    return web.json_response(result, headers={"Cache-Control": "no-store"})
+
+
 def create_app(token: str | None = None) -> web.Application:
     token = token if token is not None else os.environ.get("ASSEMBLY_EXPORT_TOKEN", "")
     if len(token) < 32:
         raise RuntimeError("ASSEMBLY_EXPORT_TOKEN must contain at least 32 characters")
-    app = web.Application()
+    app = web.Application(client_max_size=16384)
     app["export_token"] = token
     app.router.add_get("/v1/orders", orders)
+    app.router.add_get("/v1/fulfillment", shipment_status)
+    app.router.add_post("/v1/shipment-commands", shipment_command)
     return app
 
 

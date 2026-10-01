@@ -38,6 +38,7 @@ from services.orders import (
     remaining_amount,
     sanitize_shop_name,
 )
+from services.fulfillment import locked_order, record_shipment
 from services.notifications import send_new_order_notification
 from services.parser import parse_order_text
 
@@ -1119,20 +1120,49 @@ async def mark_shipped(callback: CallbackQuery, state: FSMContext) -> None:
     order_id = int(callback.data.split(":")[1])
     await state.update_data(order_id=order_id)
     await state.set_state(OrderFlow.entering_tracking)
-    await callback.message.edit_text("Type tracking number.")
+    await callback.message.edit_text("Type tracking number or send without tracking.", reply_markup=InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="Отправить без трек-номера", callback_data=f"ship_no_tracking:{order_id}")]]))
     await callback.answer()
 
 
 @router.message(OrderFlow.entering_tracking, F.text, F.chat.type.in_(ORDER_CHAT_TYPES))
 async def enter_tracking(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    if message.from_user is None or message.sender_chat is not None:
+        await respond_to_message(message, "Отправку нужно подтвердить от личного аккаунта сотрудника.")
+        return
     data = await state.get_data()
-    order = await get_order(session, int(data["order_id"]))
-    order.delivery_status = DeliveryStatus.shipped
-    order.tracking_number = message.text.strip()
+    if not message.text.strip() or len(message.text.strip()) > 255:
+        await respond_to_message(message, "Укажите трек до 255 символов или используйте кнопку без трека.")
+        return
+    order = await locked_order(session, int(data["order_id"]))
+    if order is None:
+        await state.clear()
+        await respond_to_message(message, "Заказ не найден.")
+        return
+    record_shipment(order, message.from_user.id, message.from_user.full_name, message.text.strip())
     await session.flush()
     order = await get_order(session, order.id)
     await respond_to_message(message, order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
     await state.clear()
+
+
+@router.callback_query(F.data.startswith("ship_no_tracking:"))
+async def ship_without_tracking(callback: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    order_id = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    if data.get("order_id") != order_id or await state.get_state() != OrderFlow.entering_tracking.state:
+        await callback.answer("Сначала нажмите отправку в карточке заказа", show_alert=True)
+        return
+    order = await locked_order(session, order_id)
+    if order is None:
+        await callback.answer("Заказ не найден", show_alert=True)
+        return
+    record_shipment(order, callback.from_user.id, callback.from_user.full_name)
+    await session.flush()
+    order = await get_order(session, order_id)
+    await callback.message.edit_text(order_card_text(order), reply_markup=order_card_keyboard(order), parse_mode="HTML")
+    await state.clear()
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("done:"))
