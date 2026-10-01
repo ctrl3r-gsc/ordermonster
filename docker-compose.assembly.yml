@@ -1,5 +1,12 @@
 # Use with the existing docker-compose.yml. No public export port.
 services:
+  bot:
+    environment:
+      ASSEMBLY_API_URL: http://assembly-api:8000
+      ASSEMBLY_API_TOKEN: ${ASSEMBLY_EXPORT_TOKEN:?Required}
+    networks:
+      - default
+      - assembly-integration
   assembly-export:
     build: .
     image: ordermonster-bot

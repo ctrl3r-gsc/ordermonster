@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 
 from aiogram import Bot, Dispatcher
@@ -11,6 +12,7 @@ from config import get_settings
 from db import SessionLocal, init_db
 from handlers import router
 from services.catalog import seed_current_catalog
+from services.assembly_reports import report_loop
 
 
 async def main() -> None:
@@ -51,7 +53,13 @@ async def main() -> None:
     dp.update.middleware(DbSessionMiddleware())
     dp.include_router(router)
 
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    report_task = asyncio.create_task(report_loop(bot))
+    try:
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    finally:
+        report_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await report_task
 
 
 if __name__ == "__main__":

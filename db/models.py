@@ -201,3 +201,9 @@ class AssemblyShipmentCommand(Base):
     payload_hash: Mapped[str] = mapped_column(String(64))
     result: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AssemblyDailyReport(Base):
+    __tablename__ = "assembly_daily_reports"
+    report_date: Mapped[str] = mapped_column(String(10), primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
