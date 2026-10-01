@@ -11,7 +11,7 @@ from db.models import AssemblyShipmentCommand, DeliveryStatus, Order
 class ShipmentCommand(BaseModel):
     request_id: UUID
     order_id: int = Field(gt=0)
-    action: Literal["ship", "tracking"]
+    action: Literal["ship", "tracking", "delivered", "reopen"]
     actor_id: int = Field(gt=0)
     actor_name: str = Field(min_length=1, max_length=255)
     occurred_at: AwareDatetime
@@ -69,11 +69,25 @@ async def apply_command(session, command: ShipmentCommand):
         if (order.tracking_number or "") != (command.expected_tracking_number or ""):
             raise ShipmentConflict("Трек изменён в OrderMonster. Обновите заказ и повторите действие")
         order.tracking_number = track
+    elif command.action == "delivered":
+        if order.delivery_status != DeliveryStatus.shipped:
+            raise ShipmentConflict("Заказ ещё не отправлен или уже доставлен")
+        order.delivery_status = DeliveryStatus.delivered
+    elif command.action == "reopen":
+        if order.delivery_status != DeliveryStatus.shipped:
+            raise ShipmentConflict("Вернуть в работу можно только отправленный заказ")
+        order.delivery_status = DeliveryStatus.pending_shipment
+        order.tracking_number = None
+        order.shipped_by_telegram_id = None
+        order.shipped_by_name = None
+        order.shipped_at = None
+        order.shipment_source = None
     elif order.delivery_status == DeliveryStatus.pending_shipment:
         if track and (order.tracking_number or "") != (command.expected_tracking_number or ""):
             raise ShipmentConflict("Трек изменён в OrderMonster. Обновите заказ и повторите действие")
         record_shipment(order, command.actor_id, command.actor_name, track, "assembly", command.occurred_at)
     result = fulfillment(order)
+    result["command_action"] = command.action
     if command.action == "ship" and track and track != (order.tracking_number or ""):
         result["note"] = "Заказ уже отправлен в OrderMonster; трек сохранён. Изменить его можно отдельно."
     session.add(AssemblyShipmentCommand(request_id=key, payload_hash=fingerprint, result=result))

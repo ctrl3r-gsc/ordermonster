@@ -1,4 +1,4 @@
-"""Read-only OrderMonster export. Runs separately from bot polling."""
+"""OrderMonster export plus narrowly scoped idempotent Assembly commands."""
 import hmac
 import os
 from datetime import datetime, timezone

@@ -106,3 +106,23 @@ class CommandTests(IsolatedAsyncioTestCase):
             with self.assertRaises(LookupError):
                 await apply_command(session, self.command(order_id=999))
             await session.rollback()
+
+    async def test_delivered_and_reopen_round_trip(self):
+        async with self.sessions.begin() as session:
+            await apply_command(session, self.command())
+        async with self.sessions.begin() as session:
+            delivered = await apply_command(session, self.command(action="delivered", tracking_number=None))
+            self.assertEqual(delivered["delivery_status"], "delivered")
+        async with self.sessions.begin() as session:
+            with self.assertRaises(ShipmentConflict):
+                await apply_command(session, self.command(action="reopen"))
+        # A reopened order is tested from the shipped state in a fresh fixture.
+        async with self.sessions.begin() as session:
+            order = await session.get(Order, 1)
+            order.delivery_status = DeliveryStatus.shipped
+            order.tracking_number = "TRACK"
+            order.shipped_by_telegram_id = 101
+            order.shipped_by_name = "A"
+            reopened = await apply_command(session, self.command(action="reopen"))
+            self.assertEqual(reopened["delivery_status"], "pending_shipment")
+            self.assertIsNone(reopened["tracking_number"])
