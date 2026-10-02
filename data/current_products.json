@@ -27,29 +27,29 @@
     "aliases": ["gummies 500", "500mg gummies", "strawberry 500", "ultimate strawberry", "gummies strawberry", "ultimate gummies 500"]
   },
   {
-    "name": "X-HASH GUMMIES PINEAPPLE 150mg",
+    "name": "X-STATIC GUMMIES PINEAPPLE 150mg",
     "dosage": 150,
     "flavor": "pineapple",
     "potency_type": "hash",
-    "sku": "x-hash-gummies-pineapple-150mg",
+    "sku": "x-static-gummies-pineapple-150mg",
     "price": 130.00,
     "aliases": ["x hash 150", "x-hash 150", "pineapple 150", "x hash pineapple", "x-hash gummies pineapple"]
   },
   {
-    "name": "X-HASH GUMMIES BLACKCURRANT 350mg",
+    "name": "X-STATIC GUMMIES BLACKCURRANT 350mg",
     "dosage": 350,
     "flavor": "blackcurrant",
     "potency_type": "hash",
-    "sku": "x-hash-gummies-blackcurrant-350mg",
+    "sku": "x-static-gummies-blackcurrant-350mg",
     "price": 230.00,
     "aliases": ["x hash 350", "x-hash 350", "gummies 350", "350 gummies", "gummies 350mg", "blackcurrant 350", "black currant 350", "x hash blackcurrant"]
   },
   {
-    "name": "X-HASH GUMMIES WATERMELON 600mg",
+    "name": "X-STATIC GUMMIES WATERMELON 600mg",
     "dosage": 600,
     "flavor": "watermelon",
     "potency_type": "hash",
-    "sku": "x-hash-gummies-watermelon-600mg",
+    "sku": "x-static-gummies-watermelon-600mg",
     "price": 330.00,
     "aliases": ["x hash 600", "x-hash 600", "watermelon 600", "x hash watermelon", "x-hash gummies watermelon"]
   },
@@ -71,7 +71,7 @@
     "aliases": ["breakfast cookies 100", "breakfast cookie 100", "breakfast cookies"]
   },
   {
-    "name": "BROWNIE 100mg THC",
+    "name": "BROWNIE 100mg",
     "dosage": 100,
     "potency_type": "THC",
     "sku": "brownie-100mg",
@@ -79,7 +79,7 @@
     "aliases": ["brownie 100", "brownies 100", "100mg brownie", "100mg brownies"]
   },
   {
-    "name": "COOKIES 100mg THC",
+    "name": "COOKIES 100mg",
     "dosage": 100,
     "potency_type": "THC",
     "sku": "cookies-100mg",
@@ -101,10 +101,10 @@
     "aliases": ["magic gummies 2g", "magic 2g", "shroom gummies 2g"]
   },
   {
-    "name": "HASH",
+    "name": "STATIC TROPICANA",
     "dosage": null,
     "potency_type": "hash",
-    "sku": "hash-na",
+    "sku": "static-tropicana-na",
     "price": 0.00,
     "aliases": ["hash"]
   }
