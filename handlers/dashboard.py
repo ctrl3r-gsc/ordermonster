@@ -62,9 +62,11 @@ def dashboard_summary_text(orders, page: int = 0, counts: dict[str, int] | None 
 
 
 def order_state_emoji(order) -> str:
-    if order.delivery_status == DeliveryStatus.delivered and order.payment_status.value == "paid":
+    if order.delivery_status in {DeliveryStatus.shipped, DeliveryStatus.delivered} and order.payment_status.value == "paid":
         return "✅"
-    return "⌛"
+    if order.delivery_status in {DeliveryStatus.shipped, DeliveryStatus.delivered}:
+        return "🚚"
+    return "⏳"
 
 
 def dashboard_button_text(order) -> str:
