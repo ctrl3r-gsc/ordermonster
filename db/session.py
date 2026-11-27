@@ -14,6 +14,8 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSe
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        from migration.assembly_workflow import upgrade_connection
+        await upgrade_connection(conn)
         await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS display_number INTEGER"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_orders_display_number ON orders (display_number)"))
         await conn.execute(text("ALTER TABLE orders ADD COLUMN IF NOT EXISTS notification_sent_at TIMESTAMPTZ NULL"))

@@ -16,7 +16,7 @@ EXPECTED_CATALOG_SIZE = 13
 REQUIRED_CATALOG_FIELDS = {"name", "dosage", "price"}
 REQUIRED_PRODUCT_ALIASES = [
     ("ROSIN GUMMIES GREEN APPLE 250mg", 7, ["gummies rosin", "rosin gummies", "rosin gummy", "apple rosin", "green apple rosin"]),
-    ("X-HASH GUMMIES BLACKCURRANT 350mg", 5, ["gummies 350", "350 gummies", "gummies 350mg"]),
+    ("X-STATIC GUMMIES BLACKCURRANT 350mg", 5, ["gummies 350", "350 gummies", "gummies 350mg"]),
     ("ULTIMATE GUMMIES GREEN APPLE 250mg", 2, ["250 gummies", "gummies 250mg"]),
     ("BROWNIE 500mg", 53, ["brownie 500", "brownie 500mg"]),
 ]

@@ -100,6 +100,26 @@ def aggregate_debt_rows(rows, mode: str) -> dict:
     }
 
 
+def aggregate_debt_dashboard_rows(rows) -> dict:
+    orders = []
+    total_debt = Decimal("0.00")
+    for row in rows:
+        amount = decimal_money(row.debt_amount)
+        if amount <= 0:
+            continue
+        total_debt += amount
+        orders.append({
+            "order_id": row.order_id,
+            "display_number": row.display_number or row.order_id,
+            "shop_name": row.shop_name,
+            "debt_amount": amount,
+            "delivery_status": row.delivery_status,
+            "created_at": row.created_at,
+            "age_days": int(row.age_days or 0),
+        })
+    return {"total_debt": total_debt.quantize(Decimal("0.01")), "order_count": len(orders), "orders": orders}
+
+
 def aggregate_debt_shop_rows(rows, mode: str = "shops") -> dict:
     shops = []
     total_debt = Decimal("0.00")

@@ -64,7 +64,11 @@ def dashboard_summary_text(orders, page: int = 0, counts: dict[str, int] | None 
 def order_state_emoji(order) -> str:
     if order.delivery_status == DeliveryStatus.delivered and order.payment_status.value == "paid":
         return "✅"
-    return "⌛"
+    if order.delivery_status == DeliveryStatus.delivered:
+        return "📦"
+    if order.delivery_status == DeliveryStatus.shipped:
+        return "🚚"
+    return "⏳"
 
 
 def dashboard_button_text(order) -> str:
@@ -86,6 +90,7 @@ def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineK
     if pagination_row:
         rows.append(pagination_row)
     rows.append([InlineKeyboardButton(text="📦 Packing List", callback_data="packing:list")])
+    rows.append([InlineKeyboardButton(text="💰 Debts", callback_data="debts:page:0")])
     rows.append([InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -93,6 +98,7 @@ def dashboard_keyboard(orders, page: int = 0, has_next: bool = False) -> InlineK
 def dashboard_empty_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="💰 Debts", callback_data="debts:page:0")],
             [InlineKeyboardButton(text="🏪 Shops", callback_data="shops:list")],
         ]
     )

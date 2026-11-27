@@ -21,32 +21,32 @@ CatalogItem = Literal[
     "ULTIMATE GUMMIES MANGO 100mg",
     "ULTIMATE GUMMIES GREEN APPLE 250mg",
     "ULTIMATE GUMMIES STRAWBERRY 500mg",
-    "X-HASH GUMMIES PINEAPPLE 150mg",
-    "X-HASH GUMMIES BLACKCURRANT 350mg",
-    "X-HASH GUMMIES WATERMELON 600mg",
+    "X-STATIC GUMMIES PINEAPPLE 150mg",
+    "X-STATIC GUMMIES BLACKCURRANT 350mg",
+    "X-STATIC GUMMIES WATERMELON 600mg",
     "ROSIN GUMMIES GREEN APPLE 250mg",
     "BREAKFAST COOKIES 100mg",
-    "BROWNIE 100mg THC",
-    "COOKIES 100mg THC",
+    "BROWNIE 100mg",
+    "COOKIES 100mg",
     "MAGIC GUMMIES 1g",
     "MAGIC GUMMIES 2g",
-    "HASH",
+    "STATIC TROPICANA",
 ]
 
 CATALOG_ITEM_DETAILS: dict[str, tuple[str, int | None]] = {
     "ULTIMATE GUMMIES MANGO 100mg": ("ULTIMATE GUMMIES MANGO 100mg", 100),
     "ULTIMATE GUMMIES GREEN APPLE 250mg": ("ULTIMATE GUMMIES GREEN APPLE 250mg", 250),
     "ULTIMATE GUMMIES STRAWBERRY 500mg": ("ULTIMATE GUMMIES STRAWBERRY 500mg", 500),
-    "X-HASH GUMMIES PINEAPPLE 150mg": ("X-HASH GUMMIES PINEAPPLE 150mg", 150),
-    "X-HASH GUMMIES BLACKCURRANT 350mg": ("X-HASH GUMMIES BLACKCURRANT 350mg", 350),
-    "X-HASH GUMMIES WATERMELON 600mg": ("X-HASH GUMMIES WATERMELON 600mg", 600),
+    "X-STATIC GUMMIES PINEAPPLE 150mg": ("X-STATIC GUMMIES PINEAPPLE 150mg", 150),
+    "X-STATIC GUMMIES BLACKCURRANT 350mg": ("X-STATIC GUMMIES BLACKCURRANT 350mg", 350),
+    "X-STATIC GUMMIES WATERMELON 600mg": ("X-STATIC GUMMIES WATERMELON 600mg", 600),
     "ROSIN GUMMIES GREEN APPLE 250mg": ("ROSIN GUMMIES GREEN APPLE 250mg", 250),
     "BREAKFAST COOKIES 100mg": ("BREAKFAST COOKIES 100mg", 100),
-    "BROWNIE 100mg THC": ("BROWNIE 100mg THC", 100),
-    "COOKIES 100mg THC": ("COOKIES 100mg THC", 100),
+    "BROWNIE 100mg": ("BROWNIE 100mg", 100),
+    "COOKIES 100mg": ("COOKIES 100mg", 100),
     "MAGIC GUMMIES 1g": ("MAGIC GUMMIES 1g", 1000),
     "MAGIC GUMMIES 2g": ("MAGIC GUMMIES 2g", 2000),
-    "HASH": ("HASH", None),
+    "STATIC TROPICANA": ("STATIC TROPICANA", None),
 }
 
 
@@ -438,20 +438,20 @@ SYSTEM_INSTRUCTION = (
     "     1. ULTIMATE GUMMIES MANGO 100mg\n"
     "     2. ULTIMATE GUMMIES GREEN APPLE 250mg\n"
     "     3. ULTIMATE GUMMIES STRAWBERRY 500mg\n"
-    "     4. X-HASH GUMMIES PINEAPPLE 150mg\n"
-    "     5. X-HASH GUMMIES BLACKCURRANT 350mg\n"
-    "     6. X-HASH GUMMIES WATERMELON 600mg\n"
+    "     4. X-STATIC GUMMIES PINEAPPLE 150mg\n"
+    "     5. X-STATIC GUMMIES BLACKCURRANT 350mg\n"
+    "     6. X-STATIC GUMMIES WATERMELON 600mg\n"
     "     7. ROSIN GUMMIES GREEN APPLE 250mg\n"
     "     8. BREAKFAST COOKIES 100mg\n"
-    "     9. BROWNIE 100mg THC\n"
-    "     10. COOKIES 100mg THC\n"
+    "     9. BROWNIE 100mg\n"
+    "     10. COOKIES 100mg\n"
     "     11. MAGIC GUMMIES 1g\n"
     "     12. MAGIC GUMMIES 2g\n"
-    "     13. HASH\n"
+    "     13. STATIC TROPICANA\n"
     "     You MUST map the user's requested item to one of these exact catalog items. Pay strict attention to the brand (for example X-Hash vs Ultimate vs Rosin vs Magic) and the flavor (for example Watermelon vs Mango vs Strawberry vs Green Apple). Do not hallucinate or guess items that are not on this list.\n"
     "     You must classify the user's item strictly into one of the allowed Enum/Literal values. Use brand and flavor context to make the best match, even if the user forgets the exact dosage.\n"
     "     STRICT DOSAGE PRIORITY: When mapping items to the allowed Enum catalog, DOSAGE (e.g., 150mg, 100mg, 500mg) is the HIGHEST priority matching criteria. If the user explicitly writes '150mg', you MUST select the catalog item that matches '150mg'. NEVER substitute a different dosage if the correct dosage exists in the catalog.\n"
-    "     In JSON, `product_name` MUST be one exact full catalog label from the schema, including dosage. Example: 'x-hash watermelon gummies' -> {\"product_name\": \"X-HASH GUMMIES WATERMELON 600mg\", \"dosage\": 600, \"flavor\": \"watermelon\"}.\n"
+    "     In JSON, `product_name` MUST be one exact full catalog label from the schema, including dosage. Example: 'x-hash watermelon gummies' -> {\"product_name\": \"X-STATIC GUMMIES WATERMELON 600mg\", \"dosage\": 600, \"flavor\": \"watermelon\"}.\n"
     "     If the user mentions a brand/flavor but omits the dosage (mg), map it to the most logical matching item in the provided catalog based on the brand and flavor they DID specify, but NEVER change the flavor or brand just to find a match.\n"
     "     Users will make typos when writing product names (e.g., 'guumies' instead of 'gummies'). "
     "You must logically map these typos to the correct exact catalog product when the brand/flavor/dosage evidence points to one.\n"
@@ -478,8 +478,8 @@ SYSTEM_INSTRUCTION = (
     "{\n"
     "  \"shop_name\": \"TAI MA TON\",\n"
     "  \"items\": [\n"
-    "    {\"product_name\": \"BROWNIE 100mg THC\", \"dosage\": 100, \"flavor\": null, \"quantity\": 30, \"is_gift\": false},\n"
-    "    {\"product_name\": \"BROWNIE 100mg THC\", \"dosage\": 100, \"flavor\": null, \"quantity\": 1, \"is_gift\": true}\n"
+    "    {\"product_name\": \"BROWNIE 100mg\", \"dosage\": 100, \"flavor\": null, \"quantity\": 30, \"is_gift\": false},\n"
+    "    {\"product_name\": \"BROWNIE 100mg\", \"dosage\": 100, \"flavor\": null, \"quantity\": 1, \"is_gift\": true}\n"
     "  ],\n"
     "  \"suggested_payment_method\": \"cash\",\n"
     "  \"total_amount\": 3000\n"
@@ -491,7 +491,7 @@ SYSTEM_INSTRUCTION = (
     "  \"items\": [\n"
     "    {\"product_name\": \"ULTIMATE GUMMIES GREEN APPLE 250mg\", \"dosage\": 250, \"flavor\": null, \"quantity\": 5, \"is_gift\": false},\n"
     "    {\"product_name\": \"ULTIMATE GUMMIES STRAWBERRY 500mg\", \"dosage\": 500, \"flavor\": null, \"quantity\": 15, \"is_gift\": false},\n"
-    "    {\"product_name\": \"BROWNIE 100mg THC\", \"dosage\": 100, \"flavor\": null, \"quantity\": 20, \"is_gift\": false}\n"
+    "    {\"product_name\": \"BROWNIE 100mg\", \"dosage\": 100, \"flavor\": null, \"quantity\": 20, \"is_gift\": false}\n"
     "  ],\n"
     "  \"suggested_payment_method\": null,\n"
     "  \"total_amount\": null\n"
@@ -503,7 +503,7 @@ SYSTEM_INSTRUCTION = (
     "  \"shop_name\": null,\n"
     "  \"items\": [\n"
     "    {\"product_name\": \"ULTIMATE GUMMIES STRAWBERRY 500mg\", \"dosage\": 500, \"flavor\": null, \"quantity\": 30, \"is_gift\": false},\n"
-    "    {\"product_name\": \"BROWNIE 100mg THC\", \"dosage\": 100, \"flavor\": null, \"quantity\": 15, \"is_gift\": false},\n"
+    "    {\"product_name\": \"BROWNIE 100mg\", \"dosage\": 100, \"flavor\": null, \"quantity\": 15, \"is_gift\": false},\n"
     "    {\"product_name\": \"ULTIMATE GUMMIES MANGO 100mg\", \"dosage\": 100, \"flavor\": null, \"quantity\": 30, \"is_gift\": false}\n"
     "  ],\n"
     "  \"suggested_payment_method\": null,\n"
@@ -978,29 +978,29 @@ def _catalog_label_for_item(product_name: str, dosage: int | None, flavor: str |
     if "breakfast" in search:
         return "BREAKFAST COOKIES 100mg"
     if "brownie" in search or "брауни" in search:
-        return "BROWNIE 100mg THC"
+        return "BROWNIE 100mg"
     if "cookie" in search or "печенье" in search:
-        return "COOKIES 100mg THC"
+        return "COOKIES 100mg"
     if "x-hash" in search or "x hash" in search:
         if "watermelon" in search or dosage == 600:
-            return "X-HASH GUMMIES WATERMELON 600mg"
+            return "X-STATIC GUMMIES WATERMELON 600mg"
         if "blackcurrant" in search or "black currant" in search or dosage == 350:
-            return "X-HASH GUMMIES BLACKCURRANT 350mg"
-        return "X-HASH GUMMIES PINEAPPLE 150mg"
+            return "X-STATIC GUMMIES BLACKCURRANT 350mg"
+        return "X-STATIC GUMMIES PINEAPPLE 150mg"
     if "hash" in search and "gumm" not in search:
-        return "HASH"
+        return "STATIC TROPICANA"
     if "watermelon" in search:
-        return "X-HASH GUMMIES WATERMELON 600mg"
+        return "X-STATIC GUMMIES WATERMELON 600mg"
     if "pineapple" in search:
-        return "X-HASH GUMMIES PINEAPPLE 150mg"
+        return "X-STATIC GUMMIES PINEAPPLE 150mg"
     if "blackcurrant" in search or "black currant" in search:
-        return "X-HASH GUMMIES BLACKCURRANT 350mg"
+        return "X-STATIC GUMMIES BLACKCURRANT 350mg"
     if dosage == 150:
-        return "X-HASH GUMMIES PINEAPPLE 150mg"
+        return "X-STATIC GUMMIES PINEAPPLE 150mg"
     if dosage == 350:
-        return "X-HASH GUMMIES BLACKCURRANT 350mg"
+        return "X-STATIC GUMMIES BLACKCURRANT 350mg"
     if dosage == 600:
-        return "X-HASH GUMMIES WATERMELON 600mg"
+        return "X-STATIC GUMMIES WATERMELON 600mg"
     if "strawberry" in search or "клубник" in search or dosage == 500:
         return "ULTIMATE GUMMIES STRAWBERRY 500mg"
     if "green apple" in search or "яблок" in search or dosage == 250:

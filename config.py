@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     gemini_model: str = Field(default="gemini-1.5-flash", alias="GEMINI_MODEL")
     allowed_users_raw: str = Field(default="", alias="ALLOWED_USERS")
     allowed_chats_raw: str = Field(default="", alias="ALLOWED_CHATS")
+    assembly_api_url: str = Field(default="", alias="ASSEMBLY_API_URL")
+    assembly_api_token: str = Field(default="", alias="ASSEMBLY_API_TOKEN")
+    report_chat_ids_raw: str = Field(default="", alias="REPORT_CHAT_IDS")
 
     postgres_db: str = Field(default="orderbot", alias="POSTGRES_DB")
     postgres_user: str = Field(default="orderbot", alias="POSTGRES_USER")
@@ -32,6 +35,10 @@ class Settings(BaseSettings):
     @property
     def allowed_chats(self) -> set[int]:
         return self._parse_int_set(self.allowed_chats_raw)
+
+    @property
+    def report_chat_ids(self) -> set[int]:
+        return self._parse_int_set(self.report_chat_ids_raw)
 
     @staticmethod
     def _parse_int_set(raw_values: str) -> set[int]:
