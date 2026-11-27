@@ -3,55 +3,82 @@
     "name": "ULTIMATE GUMMIES MANGO 100mg",
     "dosage": 100,
     "flavor": "mango",
-    "potency_type": "THC",
     "sku": "ultimate-gummies-mango-100mg",
-    "price": 80.00,
-    "aliases": ["gummies 100", "100mg gummies", "mango 100", "ultimate mango", "gummies mango", "ultimate gummies 100"]
+    "price": 80.0,
+    "aliases": [
+      "gummies 100",
+      "100mg gummies",
+      "mango 100",
+      "ultimate mango",
+      "gummies mango",
+      "ultimate gummies 100"
+    ]
   },
   {
     "name": "ULTIMATE GUMMIES GREEN APPLE 250mg",
     "dosage": 250,
     "flavor": "green apple",
-    "potency_type": "THC",
     "sku": "ultimate-gummies-green-apple-250mg",
-    "price": 170.00,
-    "aliases": ["gummies 250", "gummies 250mg", "250 gummies", "250mg gummies", "green apple 250", "ultimate green apple", "gummies green apple", "ultimate gummies 250"]
+    "price": 170.0,
+    "aliases": [
+      "gummies 250",
+      "gummies 250mg",
+      "250 gummies",
+      "250mg gummies",
+      "green apple 250",
+      "ultimate green apple",
+      "gummies green apple",
+      "ultimate gummies 250"
+    ]
   },
   {
     "name": "ULTIMATE GUMMIES STRAWBERRY 500mg",
     "dosage": 500,
     "flavor": "strawberry",
-    "potency_type": "THC",
     "sku": "ultimate-gummies-strawberry-500mg",
-    "price": 270.00,
-    "aliases": ["gummies 500", "500mg gummies", "strawberry 500", "ultimate strawberry", "gummies strawberry", "ultimate gummies 500"]
+    "price": 270.0,
+    "aliases": [
+      "gummies 500",
+      "500mg gummies",
+      "strawberry 500",
+      "ultimate strawberry",
+      "gummies strawberry",
+      "ultimate gummies 500"
+    ]
   },
   {
-    "name": "X-HASH GUMMIES PINEAPPLE 150mg",
+    "name": "X-STATIC GUMMIES PINEAPPLE 150mg",
     "dosage": 150,
     "flavor": "pineapple",
-    "potency_type": "hash",
-    "sku": "x-hash-gummies-pineapple-150mg",
-    "price": 130.00,
-    "aliases": ["x hash 150", "x-hash 150", "pineapple 150", "x hash pineapple", "x-hash gummies pineapple"]
+    "sku": "x-static-gummies-pineapple-150mg",
+    "price": 130.0,
+    "aliases": [
+      "pineapple 150"
+    ]
   },
   {
-    "name": "X-HASH GUMMIES BLACKCURRANT 350mg",
+    "name": "X-STATIC GUMMIES BLACKCURRANT 350mg",
     "dosage": 350,
     "flavor": "blackcurrant",
-    "potency_type": "hash",
-    "sku": "x-hash-gummies-blackcurrant-350mg",
-    "price": 230.00,
-    "aliases": ["x hash 350", "x-hash 350", "gummies 350", "350 gummies", "gummies 350mg", "blackcurrant 350", "black currant 350", "x hash blackcurrant"]
+    "sku": "x-static-gummies-blackcurrant-350mg",
+    "price": 230.0,
+    "aliases": [
+      "gummies 350",
+      "350 gummies",
+      "gummies 350mg",
+      "blackcurrant 350",
+      "black currant 350"
+    ]
   },
   {
-    "name": "X-HASH GUMMIES WATERMELON 600mg",
+    "name": "X-STATIC GUMMIES WATERMELON 600mg",
     "dosage": 600,
     "flavor": "watermelon",
-    "potency_type": "hash",
-    "sku": "x-hash-gummies-watermelon-600mg",
-    "price": 330.00,
-    "aliases": ["x hash 600", "x-hash 600", "watermelon 600", "x hash watermelon", "x-hash gummies watermelon"]
+    "sku": "x-static-gummies-watermelon-600mg",
+    "price": 330.0,
+    "aliases": [
+      "watermelon 600"
+    ]
   },
   {
     "name": "ROSIN GUMMIES GREEN APPLE 250mg",
@@ -59,53 +86,95 @@
     "flavor": "green apple",
     "potency_type": "rosin",
     "sku": "rosin-gummies-green-apple-250mg",
-    "price": 300.00,
-    "aliases": ["rosin", "gummies rosin", "rosin gummies", "rosin gummy", "apple rosin", "green apple rosin", "rosin 250", "rosin gummies 250", "rosin green apple", "rosin green apple 250"]
+    "price": 300.0,
+    "aliases": [
+      "rosin",
+      "gummies rosin",
+      "rosin gummies",
+      "rosin gummy",
+      "apple rosin",
+      "green apple rosin",
+      "rosin 250",
+      "rosin gummies 250",
+      "rosin green apple",
+      "rosin green apple 250"
+    ]
   },
   {
     "name": "BREAKFAST COOKIES 100mg",
     "dosage": 100,
-    "potency_type": "THC",
     "sku": "breakfast-cookies-100mg",
-    "price": 70.00,
-    "aliases": ["breakfast cookies 100", "breakfast cookie 100", "breakfast cookies"]
+    "price": 70.0,
+    "aliases": [
+      "breakfast cookies 100",
+      "breakfast cookie 100",
+      "breakfast cookies"
+    ]
   },
   {
-    "name": "BROWNIE 100mg THC",
+    "name": "BROWNIE 100mg",
     "dosage": 100,
-    "potency_type": "THC",
     "sku": "brownie-100mg",
-    "price": 80.00,
-    "aliases": ["brownie 100", "brownies 100", "100mg brownie", "100mg brownies"]
+    "price": 80.0,
+    "aliases": [
+      "brownie 100",
+      "brownies 100",
+      "100mg brownie",
+      "100mg brownies"
+    ]
   },
   {
-    "name": "COOKIES 100mg THC",
+    "name": "COOKIES 100mg",
     "dosage": 100,
-    "potency_type": "THC",
     "sku": "cookies-100mg",
-    "price": 80.00,
-    "aliases": ["cookies 100", "cookie 100", "100mg cookies", "100mg cookie"]
+    "price": 80.0,
+    "aliases": [
+      "cookies 100",
+      "cookie 100",
+      "100mg cookies",
+      "100mg cookie"
+    ]
   },
   {
     "name": "MAGIC GUMMIES 1g",
     "dosage": 1000,
     "sku": "magic-gummies-1g",
-    "price": 200.00,
-    "aliases": ["magic gummies 1g", "magic 1g", "shroom gummies 1g"]
+    "price": 200.0,
+    "aliases": [
+      "magic gummies 1g",
+      "magic 1g",
+      "shroom gummies 1g"
+    ]
   },
   {
     "name": "MAGIC GUMMIES 2g",
     "dosage": 2000,
     "sku": "magic-gummies-2g",
-    "price": 400.00,
-    "aliases": ["magic gummies 2g", "magic 2g", "shroom gummies 2g"]
+    "price": 400.0,
+    "aliases": [
+      "magic gummies 2g",
+      "magic 2g",
+      "shroom gummies 2g"
+    ]
   },
   {
-    "name": "HASH",
+    "name": "STATIC TROPICANA",
     "dosage": null,
-    "potency_type": "hash",
-    "sku": "hash-na",
-    "price": 0.00,
-    "aliases": ["hash"]
+    "sku": "static-tropicana-na",
+    "price": 0.0,
+    "aliases": []
+  },
+  {
+    "name": "Tom Yum Gummies 300 mg",
+    "dosage": null,
+    "flavor": "tom yum",
+    "sku": "tom-yum-gummies-300mg",
+    "price": 300.0,
+    "aliases": [
+      "tom yum gummies 300 mg",
+      "tom yum gummies 300mg",
+      "tom yum gummies",
+      "tom yum"
+    ]
   }
 ]

@@ -31,6 +31,7 @@ async def main() -> None:
         await bot.set_my_commands(
             [
                 BotCommand(command="open_assembly", description="Open Assembly Mini App"),
+                BotCommand(command="stock", description="Stock directory and balances"),
                 BotCommand(command="dashboard", description="Quick order overview"),
                 BotCommand(command="packing", description="Packing list for active orders"),
                 BotCommand(command="statistics", description="Product sales statistics"),

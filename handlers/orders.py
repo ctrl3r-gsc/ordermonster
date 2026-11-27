@@ -380,7 +380,10 @@ def add_item_products_keyboard(order_id: int, products) -> InlineKeyboardMarkup:
     rows = []
     for product in products:
         label = product.name
-        if product.dosage:
+        # Product names in the canonical catalog already include their dosage
+        # (for example, "ROSIN GUMMIES GREEN APPLE 250mg"). Do not append it a
+        # second time in the add-item picker.
+        if product.dosage and not re.search(rf"\b{int(product.dosage)}\s*mg\b", label, flags=re.IGNORECASE):
             label += f" {product.dosage}mg"
         if product.flavor:
             label += f" ({product.flavor})"
@@ -433,6 +436,10 @@ def dashboard_summary_text(orders, page: int = 0, counts: dict[str, int] | None 
 def dashboard_order_state_emoji(order) -> str:
     if order.delivery_status == DeliveryStatus.delivered and order.payment_status.value == "paid":
         return "✅"
+    if order.delivery_status == DeliveryStatus.delivered:
+        return "📦"
+    if order.delivery_status == DeliveryStatus.shipped:
+        return "🚚"
     return "⌛"
 
 
